@@ -1,7 +1,7 @@
 -- MoyXHub | Amulet Street | Single-file build
 if game.PlaceId ~= 116750055341696 then warn("[MoyXHub] Unsupported place"); return end
 -- Moy Hub | Amulet Street Auto Gameplay
--- F8 toggles. No reset, no Robux purchases, no teleport.
+-- F8 toggles. No reset or Robux purchases. Warp movement.
 local P = game:GetService("Players").LocalPlayer
 local RS = game:GetService("ReplicatedStorage")
 local UIS = game:GetService("UserInputService")
@@ -441,19 +441,63 @@ local function near(part: BasePart): boolean
     local char = P.Character
     local h = char and char:FindFirstChildOfClass("Humanoid")
     local root = char and char:FindFirstChild("HumanoidRootPart")
-    if not h or not root or not root:IsA("BasePart") then return false end
-    if (root.Position-part.Position).Magnitude <= 7 and not h.Sit then return true end
-    if h.Sit then h.Sit = false; waitFor(0.4) end
-    local dest = part.Position
-    local delta = Vector3.new(root.Position.X-dest.X,0,root.Position.Z-dest.Z)
-    if delta.Magnitude > 3 then dest += delta.Unit*3 end
-    local start = os.clock()
-    repeat
-        h:MoveTo(dest)
-        if not waitFor(0.35) then return false end
-    until (root.Position-part.Position).Magnitude <= 7 or os.clock()-start > 7
+    if not char or not h or not root or not root:IsA("BasePart") or not active() then return false end
+    if h.Sit then h.Sit=false; if not waitFor(0.4) then return false end end
+    if (root.Position-part.Position).Magnitude <= 4.5 then return true end
+    local ray=RaycastParams.new()
+    ray.FilterType=Enum.RaycastFilterType.Exclude
+    ray.FilterDescendantsInstances={char}
+    ray.RespectCanCollide=true
+    local overlap=OverlapParams.new()
+    overlap.FilterType=Enum.RaycastFilterType.Exclude
+    overlap.FilterDescendantsInstances={char}
+    overlap.RespectCanCollide=true
+    local height=h.HipHeight+root.Size.Y/2
+    if h.RigType==Enum.HumanoidRigType.R6 then
+        local leg=char:FindFirstChild("Left Leg")
+        if leg and leg:IsA("BasePart") then height+=leg.Size.Y end
+    end
+    local dirs={part.CFrame.LookVector,-part.CFrame.LookVector,part.CFrame.RightVector,-part.CFrame.RightVector,
+        (part.CFrame.LookVector+part.CFrame.RightVector).Unit,(part.CFrame.LookVector-part.CFrame.RightVector).Unit,
+        (-part.CFrame.LookVector+part.CFrame.RightVector).Unit,(-part.CFrame.LookVector-part.CFrame.RightVector).Unit}
+    local best: Vector3?=nil
+    local bestScore=math.huge
+    for _,radius in ipairs({3.5,4.5,5.5}) do
+        for _,dir in ipairs(dirs) do
+            local point=part.Position+Vector3.new(dir.X,0,dir.Z)*radius
+            local hit=workspace:Raycast(point+Vector3.yAxis*4,-Vector3.yAxis*15,ray)
+            if hit and hit.Normal.Y>.85 then
+                local floor=hit.Instance
+                local name=string.lower(floor.Name)
+                if string.find(name,"floor",1,true) or name=="lotground" then
+                    local pos=hit.Position+Vector3.yAxis*(height+.08)
+                    if (pos-part.Position).Magnitude<=6.5 then
+                        local blocked=false
+                        for _,obstacle in ipairs(workspace:GetPartBoundsInBox(CFrame.new(hit.Position+Vector3.yAxis*(height+.35)),Vector3.new(2.8,math.max(4.5,height*2-.5),2.8),overlap)) do
+                            if obstacle~=floor then blocked=true;break end
+                        end
+                        if not blocked then
+                            local score=(pos-root.Position).Magnitude+radius*.5
+                            if score<bestScore then best=pos;bestScore=score end
+                        end
+                    end
+                end
+            end
+        end
+    end
+    if not best then report("ไม่พบจุดวาร์ปที่ปลอดภัย: "..part.Name); return false end
+    if not active() then return false end
+    local target=best :: Vector3
+    local face=Vector3.new(part.Position.X,target.Y,part.Position.Z)
     h:Move(Vector3.zero)
-    return (root.Position-part.Position).Magnitude <= 7
+    h:MoveTo(root.Position)
+    char:PivotTo(CFrame.lookAt(target,face))
+    root.AssemblyLinearVelocity=Vector3.zero
+    root.AssemblyAngularVelocity=Vector3.zero
+    ctl.WarpCount=(ctl.WarpCount or 0)+1
+    ctl.LastWarp=part:GetFullName()
+    if not waitFor(.45) then return false end
+    return (root.Position-part.Position).Magnitude<=7
 end
 local function prompt(part: BasePart, name: string): boolean
     local pr = part:FindFirstChild(name)
@@ -649,6 +693,7 @@ local function flag(section: any, name: string, desc: string, key: string)
 end
 flag(Main,"เปิดร้านอัตโนมัติ","เปิดร้านเมื่อร้านปิด","Open")
 flag(Main,"รับลูกค้าอัตโนมัติ","นั่งประจำเคาน์เตอร์และจัดการลูกค้า","Customer")
+Main:Label("เดินทาง: วาร์ปไปยังจุดว่างข้างอุปกรณ์")
 Main:Label("UPGRADE ทำงานแยกจาก FARM • F8 พักทุกระบบ")
 local Eye = UI:Tab("INSPECT")
 local E = Eye:Section("ระบบแยกพระแท้–เก๊")
