@@ -1,0 +1,733 @@
+--!nonstrict
+-- MoyXHub | Dashboard UI concept 01
+-- Standalone LocalScript. Original interface inspired by the four supplied reference images.
+-- Dashboard with opt-in normal movement and loot collection; no remote calls or spending.
+-- Install in StarterPlayerScripts for a Roblox Studio preview.
+local Players=game:GetService("Players")
+local UIS=game:GetService("UserInputService")
+local Tween=game:GetService("TweenService")
+local Run=game:GetService("RunService")
+local Stats=game:GetService("Stats")
+local P=Players.LocalPlayer
+local parent=P:WaitForChild("PlayerGui")
+local existing=parent:FindFirstChild("MoyXHub_Dashboard")
+if existing then existing:Destroy() end
+local theme={
+    Background=Color3.fromRGB(19,16,21),
+    Sidebar=Color3.fromRGB(30,24,33),
+    Section=Color3.fromRGB(25,21,29),
+    Header=Color3.fromRGB(23,19,26),
+    Outline=Color3.fromRGB(47,39,52),
+    Element=Color3.fromRGB(42,35,46),
+    Input=Color3.fromRGB(21,17,24),
+    Text=Color3.fromRGB(240,233,244),
+    Muted=Color3.fromRGB(153,139,161),
+    Accent=Color3.fromRGB(222,177,246)
+}
+local bindings={}
+local function obj(class,holder,props)
+    local v=Instance.new(class)
+    for k,x in pairs(props or {}) do v[k]=x end
+    v.Parent=holder
+    return v
+end
+local function themed(v,prop,key)
+    v[prop]=theme[key];table.insert(bindings,{v,prop,key});return v
+end
+local function corner(v,r) obj("UICorner",v,{CornerRadius=UDim.new(0,r or 6)}) end
+local function stroke(v)
+    -- Border mode keeps outlines off the text glyphs of TextButtons/TextBoxes.
+    themed(obj("UIStroke",v,{Thickness=1,Transparency=.1,ApplyStrokeMode=Enum.ApplyStrokeMode.Border,LineJoinMode=Enum.LineJoinMode.Round}),"Color","Outline")
+end
+local function layout(v,gap,direction)
+    return obj("UIListLayout",v,{Padding=UDim.new(0,gap or 6),SortOrder=Enum.SortOrder.LayoutOrder,FillDirection=direction or Enum.FillDirection.Vertical})
+end
+local function pad(v,l,t,r,b) obj("UIPadding",v,{PaddingLeft=UDim.new(0,l),PaddingTop=UDim.new(0,t),PaddingRight=UDim.new(0,r or l),PaddingBottom=UDim.new(0,b or t)}) end
+local function frame(holder,props,key)
+    local v=obj("Frame",holder,props);v.BorderSizePixel=0
+    if key then themed(v,"BackgroundColor3",key) else v.BackgroundTransparency=1 end
+    return v
+end
+local function readableSize(n)
+    local sizes={[10]=12,[11]=14,[12]=14,[13]=15,[15]=17,[17]=19,[18]=19,[21]=23,[27]=30}
+    return sizes[n] or n
+end
+local function label(holder,txt,size,props,key)
+    local v=obj("TextLabel",holder,{BackgroundTransparency=1,Text=txt,Font=Enum.Font.SourceSansSemibold,TextSize=readableSize(size or 12),TextXAlignment=Enum.TextXAlignment.Left,TextTruncate=Enum.TextTruncate.AtEnd,BorderSizePixel=0})
+    for k,x in pairs(props or {}) do v[k]=k=="TextSize" and readableSize(x) or x end
+    return themed(v,"TextColor3",key or "Text")
+end
+local function button(holder,txt,props,key)
+    local v=obj("TextButton",holder,{BorderSizePixel=0,AutoButtonColor=false,Text=txt,Font=Enum.Font.SourceSansSemibold,TextSize=14})
+    for k,x in pairs(props or {}) do v[k]=k=="TextSize" and readableSize(x) or x end
+    themed(v,"BackgroundColor3",key or "Element");themed(v,"TextColor3","Text");corner(v,6)
+    return v
+end
+local function animate(v,p,time) Tween:Create(v,TweenInfo.new(time or .16,Enum.EasingStyle.Quad,Enum.EasingDirection.Out),p):Play() end
+local gui=obj("ScreenGui",parent,{Name="MoyXHub_Dashboard",ResetOnSpawn=false,IgnoreGuiInset=true,DisplayOrder=80,ZIndexBehavior=Enum.ZIndexBehavior.Sibling})
+local window=frame(gui,{Name="Window",AnchorPoint=Vector2.new(.5,.5),Position=UDim2.fromScale(.5,.5),Size=UDim2.fromOffset(780,610),ClipsDescendants=true},"Background");corner(window,12);stroke(window)
+local scale=obj("UIScale",window,{Scale=1})
+-- Rounded root corners are not a true rounded mask in Roblox.
+-- Draw a rounded sidebar with a square right-hand seam inside the root.
+local sidebar=frame(window,{Size=UDim2.new(0,112,1,0)},"Sidebar")
+corner(sidebar,12)
+local seam=frame(sidebar,{Name="SidebarSeam",Position=UDim2.new(1,-13,0,0),Size=UDim2.new(0,13,1,0)},"Sidebar")
+-- Moy monogram: editable native geometry, based on the brand's angular M/H.
+local function moyMark(holder,position,factor)
+    local mark=frame(holder,{Name="MoyMonogram",AnchorPoint=Vector2.new(.5,.5),Position=position,Size=UDim2.fromOffset(68,60)})
+    obj("UIScale",mark,{Scale=factor or 1})
+    local function segment(x1,y1,x2,y2,width,color,z)
+        local dx,dy=x2-x1,y2-y1
+        local v=frame(mark,{AnchorPoint=Vector2.new(.5,.5),Position=UDim2.fromOffset((x1+x2)/2,(y1+y2)/2),Size=UDim2.fromOffset(math.sqrt(dx*dx+dy*dy)+width*.4,width),Rotation=math.deg(math.atan2(dy,dx)),ZIndex=z or 2})
+        if typeof(color)=="Color3" then v.BackgroundTransparency=0;v.BackgroundColor3=color else v.BackgroundTransparency=0;themed(v,"BackgroundColor3",color) end
+        return v
+    end
+    local lavender=Color3.fromRGB(229,205,246)
+    -- Fine shield outline and angular white M above the purple H.
+    local outline={{5,16,34,3},{34,3,63,16},{63,16,59,43},{59,43,34,57},{34,57,9,43},{9,43,5,16}}
+    for _,p in ipairs(outline) do local v=segment(p[1],p[2],p[3],p[4],1.5,"Accent",2);v.BackgroundTransparency=.62 end
+    segment(14,37,19,17,7,lavender,4)
+    segment(19,17,34,29,7,lavender,4)
+    segment(34,29,52,14,7,lavender,4)
+    segment(52,14,47,34,7,lavender,4)
+    segment(26,48,30,31,6,"Accent",5)
+    segment(43,47,47,31,6,"Accent",5)
+    segment(28,40,45,35,6,"Accent",5)
+    return mark
+end
+local logo=moyMark(sidebar,UDim2.new(.5,0,0,42),.92)
+local nav=frame(sidebar,{Position=UDim2.fromOffset(10,83),Size=UDim2.new(1,-20,1,-164)})
+layout(nav,10)
+local body=frame(window,{Position=UDim2.fromOffset(112,0),Size=UDim2.new(1,-112,1,0)})
+local header=frame(body,{Size=UDim2.new(1,0,0,56)})
+local title=label(header,"Home",18,{Position=UDim2.fromOffset(16,0),Size=UDim2.new(1,-245,1,0),Font=Enum.Font.SourceSansBold})
+local search=obj("TextBox",header,{Position=UDim2.new(1,-202,0,14),Size=UDim2.fromOffset(156,28),BorderSizePixel=0,ClearTextOnFocus=false,Text="",PlaceholderText="ค้นหาเมนู...",Font=Enum.Font.SourceSans,TextSize=14})
+themed(search,"BackgroundColor3","Input");themed(search,"TextColor3","Text");themed(search,"PlaceholderColor3","Muted");corner(search,6);stroke(search);pad(search,8,0)
+local hide=button(header,"–",{Position=UDim2.new(1,-36,0,14),Size=UDim2.fromOffset(26,28)})
+local status=label(body,"MoyXHub  •  UI Preview",{ } and 10,{Position=UDim2.new(0,14,1,-24),Size=UDim2.new(1,-28,0,18)},"Muted")
+local function say(s) status.Text=tostring(s) end
+local orb=button(gui,"",{Name="MoyOpen",Visible=false,Position=UDim2.new(0,18,.5,-22),Size=UDim2.fromOffset(46,46)},"Sidebar");stroke(orb)
+moyMark(orb,UDim2.fromScale(.5,.5),.57)
+local function visible(on) window.Visible=on;orb.Visible=not on end
+hide.Activated:Connect(function() visible(false) end);orb.Activated:Connect(function() visible(true) end)
+local key=Enum.KeyCode.LeftAlt
+local connections={}
+local function connect(signal,fn) local c=signal:Connect(fn);table.insert(connections,c);return c end
+connect(UIS.InputBegan,function(i,processed) if not processed and not UIS:GetFocusedTextBox() and i.KeyCode==key then visible(not window.Visible) end end)
+local dragging,dragStart,startPos=false,nil,nil
+local requestedScale=1
+local function clampCenter(x,y)
+    local cam=workspace.CurrentCamera
+    if not cam then return end
+    local v=cam.ViewportSize
+    local hw,hh=780*scale.Scale/2,610*scale.Scale/2
+    local minX,maxX=hw+10,v.X-hw-10
+    local minY,maxY=hh+10,v.Y-hh-10
+    x=if maxX>=minX then math.clamp(x,minX,maxX) else v.X/2
+    y=if maxY>=minY then math.clamp(y,minY,maxY) else v.Y/2
+    -- Snap the visible top-left to the physical pixel grid.
+    window.Position=UDim2.fromOffset(math.round(x-hw)+hw,math.round(y-hh)+hh)
+end
+local function center()
+    local v=workspace.CurrentCamera.ViewportSize
+    local p=window.Position
+    return Vector2.new(p.X.Scale*v.X+p.X.Offset,p.Y.Scale*v.Y+p.Y.Offset)
+end
+title.Active=true
+title.InputBegan:Connect(function(i)
+    if i.UserInputType==Enum.UserInputType.MouseButton1 or i.UserInputType==Enum.UserInputType.Touch then
+        dragging=true;dragStart=i.Position;startPos=center()
+    end
+end)
+connect(UIS.InputEnded,function(i) if i.UserInputType==Enum.UserInputType.MouseButton1 or i.UserInputType==Enum.UserInputType.Touch then dragging=false end end)
+connect(UIS.InputChanged,function(i)
+    if dragging and (i.UserInputType==Enum.UserInputType.MouseMovement or i.UserInputType==Enum.UserInputType.Touch) then
+        local d=i.Position-dragStart;clampCenter(startPos.X+d.X,startPos.Y+d.Y)
+    end
+end)
+local function fit()
+    local cam=workspace.CurrentCamera
+    if not cam then return end
+    local v=cam.ViewportSize
+    local available=math.min(requestedScale,(v.X-20)/780,(v.Y-20)/610)
+    scale.Scale=math.max(.25,math.floor(available*100+1e-6)/100)
+    local p=center();clampCenter(p.X,p.Y)
+end
+if workspace.CurrentCamera then connect(workspace.CurrentCamera:GetPropertyChangedSignal("ViewportSize"),fit) end;fit()
+local avatar=obj("ImageLabel",sidebar,{AnchorPoint=Vector2.new(.5,1),Position=UDim2.new(.5,0,1,-34),Size=UDim2.fromOffset(39,39),BackgroundTransparency=1});corner(avatar,40);stroke(avatar)
+local playerName=label(sidebar,P.DisplayName,11,{Position=UDim2.new(0,5,1,-30),Size=UDim2.new(1,-10,0,18),TextXAlignment=Enum.TextXAlignment.Center})
+task.spawn(function() local ok,url=pcall(function() return Players:GetUserThumbnailAsync(P.UserId,Enum.ThumbnailType.HeadShot,Enum.ThumbnailSize.Size150x150) end);if ok and avatar.Parent then avatar.Image=url end end)
+-- Small native geometry icons: no unsupported Unicode glyphs or external assets.
+local function icon(holder,kind)
+    local root=frame(holder,{Name="NavIcon",AnchorPoint=Vector2.new(.5,0),Position=UDim2.new(.5,0,0,10),Size=UDim2.fromOffset(25,25)})
+    local parts={}
+    local function line(x,y,w,h,rot)
+        local a=frame(root,{AnchorPoint=Vector2.new(.5,.5),Position=UDim2.fromOffset(x,y),Size=UDim2.fromOffset(w,h),Rotation=rot or 0},"Muted")
+        corner(a,2);table.insert(parts,{a,"BackgroundColor3"});return a
+    end
+    local function ring(x,y,w,h,r)
+        local a=frame(root,{Position=UDim2.fromOffset(x,y),Size=UDim2.fromOffset(w,h)})
+        corner(a,r or 3)
+        local st=themed(obj("UIStroke",a,{Thickness=2.3}),"Color","Muted");table.insert(parts,{st,"Color"})
+        return a
+    end
+    if kind=="Home" then
+        line(8,8,12,2.6,-42);line(17,8,12,2.6,42)
+        line(5,16,2.6,12);line(20,16,2.6,12);line(12.5,22,17,2.6)
+        line(10,18,2.2,8);line(15,18,2.2,8);line(12.5,14.3,6,2.2)
+    elseif kind=="Farm" then
+        line(12,12,25,3,45);line(12,12,25,3,-45)
+        line(17,18,9,2.5,-45);line(8,18,9,2.5,45)
+        line(21,21,5,3,45);line(4,21,5,3,-45)
+    elseif kind=="Account" then
+        ring(8,2,9,9,9);ring(3,14,19,10,5)
+    else
+        ring(6,6,13,13,13);ring(10,10,5,5,5)
+        for i=0,7 do local angle=i*math.pi/4;line(12.5+math.cos(angle)*9.5,12.5+math.sin(angle)*9.5,5,3,i*45) end
+    end
+    return parts
+end
+local pages,navButtons,searchRows={},{},{}
+local navIcons,navLabels={},{} 
+local current="Home"
+local function filter()
+    local q=string.lower(search.Text)
+    for _,r in ipairs(searchRows) do r.Row.Visible=q=="" or string.find(string.lower(r.Name),q,1,true)~=nil end
+end
+search:GetPropertyChangedSignal("Text"):Connect(filter)
+local function show(name)
+    current=name;title.Text=({Home="Home  /  ภาพรวม",Farm="Farm  /  ระบบฟาร์ม",Account="Account  /  จัดการบัญชี",Settings="Settings  /  การตั้งค่า"})[name]
+    for k,v in pairs(pages) do v.Visible=k==name end
+    for k,v in pairs(navButtons) do
+        local col=k==name and theme.Accent or theme.Muted
+        v.BackgroundTransparency=k==name and 0 or 1
+        navLabels[k].TextColor3=col
+        for _,p in ipairs(navIcons[k]) do p[1][p[2]]=col end
+    end
+    search.Text="";filter()
+end
+local function page(name,mark)
+    local n=button(nav,"",{Size=UDim2.new(1,0,0,66),BackgroundTransparency=1});navButtons[name]=n
+    navIcons[name]=icon(n,name)
+    navLabels[name]=label(n,name,13,{Position=UDim2.fromOffset(0,37),Size=UDim2.new(1,0,0,20),TextXAlignment=Enum.TextXAlignment.Center},"Muted")
+    n.Activated:Connect(function() show(name) end)
+    local p=obj("ScrollingFrame",body,{Name=name,Position=UDim2.fromOffset(13,56),Size=UDim2.new(1,-26,1,-84),BackgroundTransparency=1,BorderSizePixel=0,ScrollBarThickness=3,AutomaticCanvasSize=Enum.AutomaticSize.Y,CanvasSize=UDim2.fromOffset(0,0),Visible=false,ScrollingDirection=Enum.ScrollingDirection.Y});themed(p,"ScrollBarImageColor3","Outline");pad(p,1,2,3,5)
+    pages[name]=p
+    return p
+end
+local home=page("Home","⌂")
+local farm=page("Farm","✦")
+local account=page("Account","♙")
+local settings=page("Settings","⚙")
+local state={}
+local callbacks={}
+-- UI state can later be connected using controller:SetCallback("farm.auto", function(value) ... end).
+local controller={}
+function controller:SetCallback(id,fn) callbacks[id]=fn end
+function controller:GetState() return table.clone(state) end
+local function change(id,v)
+    state[id]=v
+    local cb=callbacks[id]
+    if cb then local ok,err=pcall(cb,v);if not ok then say("ผิดพลาด: "..tostring(err)) end
+    else say(id.."  •  ตัวอย่าง UI เท่านั้น") end
+end
+local function columns(p)
+    local wrap=frame(p,{Size=UDim2.new(1,0,0,0),AutomaticSize=Enum.AutomaticSize.Y})
+    local l=frame(wrap,{Size=UDim2.new(.5,-5,0,0),AutomaticSize=Enum.AutomaticSize.Y})
+    local r=frame(wrap,{Position=UDim2.new(.5,5,0,0),Size=UDim2.new(.5,-5,0,0),AutomaticSize=Enum.AutomaticSize.Y})
+    -- UIListLayout makes the wrapper's height derive from its taller column.
+    local horizontal=layout(wrap,10,Enum.FillDirection.Horizontal);horizontal.VerticalAlignment=Enum.VerticalAlignment.Top
+    layout(l,10);layout(r,10);return l,r
+end
+local function section(col,name,icon)
+    local box=frame(col,{Size=UDim2.new(1,0,0,0),AutomaticSize=Enum.AutomaticSize.Y},"Section");corner(box,7);stroke(box);layout(box,0)
+    local h=button(box,name,{Size=UDim2.new(1,0,0,34),TextXAlignment=Enum.TextXAlignment.Left,TextSize=13},"Header");pad(h,11,0)
+    local fold=frame(h,{AnchorPoint=Vector2.new(1,.5),Position=UDim2.new(1,-2,.5,0),Size=UDim2.fromOffset(10,2.5)},"Accent");corner(fold,2)
+    local vertical=frame(h,{AnchorPoint=Vector2.new(1,.5),Position=UDim2.new(1,-5.75,.5,0),Size=UDim2.fromOffset(2.5,10),Visible=false},"Accent");corner(vertical,2)
+    local inner=frame(box,{Size=UDim2.new(1,0,0,0),AutomaticSize=Enum.AutomaticSize.Y});layout(inner,5);pad(inner,10,8,10,10)
+    h.Activated:Connect(function() inner.Visible=not inner.Visible;vertical.Visible=not inner.Visible end)
+    return inner
+end
+local function row(s,name,height)
+    local r=frame(s,{Size=UDim2.new(1,0,0,height or 28)})
+    table.insert(searchRows,{Row=r,Name=name})
+    return r
+end
+local function toggle(s,name,id,default)
+    local r=row(s,name);label(r,name,11,{Size=UDim2.new(1,-47,1,0)})
+    local b=button(r,"",{AnchorPoint=Vector2.new(1,.5),Position=UDim2.new(1,0,.5,0),Size=UDim2.fromOffset(35,18)})
+    corner(b,20)
+    local knob=frame(b,{AnchorPoint=Vector2.new(0,.5),Size=UDim2.fromOffset(13,13),Position=UDim2.new(0,3,.5,0)},"Text");corner(knob,20)
+    state[id]=default==true
+    local function render()
+        animate(b,{BackgroundColor3=state[id] and theme.Accent or theme.Element})
+        animate(knob,{Position=UDim2.new(0,state[id] and 19 or 3,.5,0),BackgroundColor3=state[id] and theme.Background or theme.Text})
+    end
+    b.Activated:Connect(function() change(id,not state[id]);render() end);render()
+end
+local function dropdown(s,name,id,options,default)
+    local r=row(s,name,28)
+    label(r,name,11,{Size=UDim2.new(.51,0,0,26)})
+    local b=button(r,"",{Position=UDim2.new(.52,0,0,2),Size=UDim2.new(.48,0,0,24),TextSize=11},"Input");stroke(b)
+    local list=frame(r,{Position=UDim2.fromOffset(0,30),Size=UDim2.new(1,0,0,#options*26+5),Visible=false},"Header");corner(list,5);stroke(list);layout(list,2);pad(list,4,3)
+    local chevron=frame(b,{AnchorPoint=Vector2.new(1,.5),Position=UDim2.new(1,-6,.5,0),Size=UDim2.fromOffset(10,10)})
+    for i=1,2 do
+        local line=frame(chevron,{AnchorPoint=Vector2.new(.5,.5),Position=UDim2.fromOffset(i==1 and 3.5 or 7,5),Size=UDim2.fromOffset(6,1.7),Rotation=i==1 and 42 or -42},"Muted");corner(line,2)
+    end
+    pad(b,5,0,17,0);b.TextXAlignment=Enum.TextXAlignment.Left;b.TextTruncate=Enum.TextTruncate.AtEnd
+    state[id]=default or options[1];local function render() b.Text=tostring(state[id]) end
+    local function close() list.Visible=false;r.Size=UDim2.new(1,0,0,28) end
+    for _,opt in ipairs(options) do
+        local x=button(list,opt,{Size=UDim2.new(1,0,0,23),TextSize=10});x.Activated:Connect(function()change(id,opt);render();close()end)
+    end
+    b.Activated:Connect(function() if list.Visible then close() else list.Visible=true;r.Size=UDim2.new(1,0,0,35+#options*26) end end);render()
+end
+local function action(s,name,id)
+    local r=row(s,name,28);local b=button(r,name,{Size=UDim2.fromScale(1,1),TextSize=11})
+    b.Activated:Connect(function() change(id,true) end);return b
+end
+local function input(s,name,id,hint,initial)
+    local r=row(s,name);label(r,name,11,{Size=UDim2.new(.46,0,1,0)})
+    local x=obj("TextBox",r,{Position=UDim2.new(.48,0,0,2),Size=UDim2.new(.52,0,0,24),BorderSizePixel=0,Text=initial or "",PlaceholderText=hint or "",ClearTextOnFocus=false,Font=Enum.Font.SourceSans,TextSize=14});corner(x,5);themed(x,"BackgroundColor3","Input");themed(x,"TextColor3","Text");themed(x,"PlaceholderColor3","Muted");state[id]=x.Text;x.FocusLost:Connect(function()change(id,x.Text)end)
+end
+local function slider(s,name,id,min,max,default)
+    local r=row(s,name,42);local t=label(r,name,11,{Size=UDim2.new(1,0,0,20)})
+    local track=button(r,"",{Position=UDim2.fromOffset(0,26),Size=UDim2.new(1,0,0,8)},"Input");local fill=frame(track,{Size=UDim2.fromScale(0,1)},"Accent");corner(fill,5)
+    state[id]=default
+    local function render() fill.Size=UDim2.fromScale((state[id]-min)/(max-min),1);t.Text=name.."  •  "..tostring(state[id]) end
+    local active=false
+    local function update(px) change(id,math.floor(min+math.clamp((px-track.AbsolutePosition.X)/math.max(1,track.AbsoluteSize.X),0,1)*(max-min)+.5));render() end
+    track.InputBegan:Connect(function(i) if i.UserInputType==Enum.UserInputType.MouseButton1 or i.UserInputType==Enum.UserInputType.Touch then active=true;update(i.Position.X) end end)
+    connect(UIS.InputChanged,function(i) if active and (i.UserInputType==Enum.UserInputType.MouseMovement or i.UserInputType==Enum.UserInputType.Touch) then update(i.Position.X) end end)
+    connect(UIS.InputEnded,function(i) if i.UserInputType==Enum.UserInputType.MouseButton1 or i.UserInputType==Enum.UserInputType.Touch then active=false end end);render()
+end
+-- HOME
+layout(home,10)
+local profile=frame(home,{Size=UDim2.new(1,0,0,96)},"Section");corner(profile,8);stroke(profile)
+local portrait=obj("ImageLabel",profile,{Position=UDim2.fromOffset(15,15),Size=UDim2.fromOffset(66,66),BackgroundTransparency=1});corner(portrait,40);stroke(portrait)
+task.spawn(function() local ok,url=pcall(function() return Players:GetUserThumbnailAsync(P.UserId,Enum.ThumbnailType.HeadShot,Enum.ThumbnailSize.Size150x150) end);if ok and portrait.Parent then portrait.Image=url end end)
+label(profile,"ยินดีต้อนรับกลับมา",11,{Position=UDim2.fromOffset(93,14),Size=UDim2.new(1,-200,0,18)},"Muted")
+label(profile,P.DisplayName,21,{Position=UDim2.fromOffset(93,32),Size=UDim2.new(1,-190,0,30),Font=Enum.Font.SourceSansBold})
+label(profile,"@"..P.Name,11,{Position=UDim2.fromOffset(93,65),Size=UDim2.new(1,-190,0,17)},"Muted")
+local chip=label(profile,"MOY  •  PREVIEW",10,{AnchorPoint=Vector2.new(1,0),Position=UDim2.new(1,-14,0,16),Size=UDim2.fromOffset(110,28),TextXAlignment=Enum.TextXAlignment.Center},"Accent")
+local statsRow=frame(home,{Size=UDim2.new(1,0,0,65)});layout(statsRow,5,Enum.FillDirection.Horizontal)
+local metrics={}
+for _,name in ipairs({"Players","Session","FPS","Ping","Place","UI"}) do
+    local card=frame(statsRow,{Size=UDim2.new(1/6,-5,1,0)},"Section");corner(card,6);stroke(card)
+    label(card,name,10,{Position=UDim2.fromOffset(8,8),Size=UDim2.new(1,-16,0,17)},"Muted")
+    metrics[name]=label(card,"—",15,{Position=UDim2.fromOffset(8,28),Size=UDim2.new(1,-16,0,27),Font=Enum.Font.SourceSansBold})
+end
+local info=frame(home,{Size=UDim2.new(1,0,0,142)},"Section");corner(info,7);stroke(info);pad(info,12,9);layout(info,5)
+label(info,"ข้อมูลเกมและเซิร์ฟเวอร์",13,{Size=UDim2.new(1,0,0,22)},"Accent")
+label(info,"Place  "..tostring(game.PlaceId).."    |    Universe  "..tostring(game.GameId),11,{Size=UDim2.new(1,0,0,20)},"Muted")
+label(info,"Job  "..(game.JobId~="" and game.JobId or "Studio"),11,{Size=UDim2.new(1,0,0,20)},"Muted")
+local ir=frame(info,{Size=UDim2.new(1,0,0,26)});layout(ir,6,Enum.FillDirection.Horizontal)
+for _,n in ipairs({"Rejoin","Server Hop","Join Lowest Server"}) do local b=button(ir,n,{Size=UDim2.new(1/3,-4,1,0),TextSize=10});b.Activated:Connect(function()change("home."..n,true)end) end
+local about=section(home,"MoyXHub  •  สถานะ UI","◆");label(about,"ต้นแบบ Dashboard • ใช้งานได้โดยไม่โหลดโค้ดภายนอก",11,{Size=UDim2.new(1,0,0,28)},"Muted")
+-- FARM
+local fl,fr=columns(farm)
+local training=section(fl,"ฝึกพลัง","")
+toggle(training,"ฝึกพลังอัตโนมัติ","fruit.train.auto",false)
+dropdown(training,"รูปแบบการฝึก","fruit.train.mode",{"อัตโนมัติ","ฝึกพลัง","ต่อสู้"},"อัตโนมัติ")
+local battle=section(fl,"ต่อสู้และฟาร์ม","")
+toggle(battle,"โจมตีอัตโนมัติ","fruit.attack.auto",false)
+toggle(battle,"ฟาร์มด่านอัตโนมัติ","fruit.stage.auto",false)
+toggle(battle,"ปฏิเสธ Revive อัตโนมัติ","fruit.revive.no",true)
+-- Decline only the exact free No button in the game's revive dialog.
+local function reviveNoButton()
+    local fusion=P.PlayerGui:FindFirstChild("FusionUI")
+    local panel=fusion and fusion:FindFirstChild("RevivePanelRoot")
+    local canvas=panel and panel:FindFirstChild("Canvas")
+    local main=canvas and canvas:FindFirstChild("MainFrame")
+    local actions=main and main:FindFirstChild("Actions")
+    local tile=actions and actions:FindFirstChild("NoTile")
+    local slab=tile and tile:FindFirstChild("Slab")
+    local btn=slab and slab:FindFirstChild("No")
+    local caption=btn and btn:FindFirstChild("Title")
+    local title=main and main:FindFirstChild("Title")
+    if not(btn and btn:IsA("TextButton") and btn.Active and caption and caption:IsA("TextLabel") and caption.Text=="No" and title and title:IsA("TextLabel") and title.Text=="REVIVE?") then return nil end
+    local node=btn
+    while node and node~=P.PlayerGui do
+        if node:IsA("GuiObject") and not node.Visible then return nil end
+        if node:IsA("ScreenGui") and not node.Enabled then return nil end
+        node=node.Parent
+    end
+    return btn
+end
+local reviveLast=0
+local function declineRevive()
+    if not state["fruit.revive.no"] or not isrbxactive() or UIS:GetFocusedTextBox() then return end
+    local btn=reviveNoButton()
+    if not btn or os.clock()-reviveLast<.6 then return end
+    local wasVisible=window.Visible
+    if wasVisible then visible(false) end
+    local ok,err=pcall(function()
+        local inset=game:GetService("GuiService"):GetGuiInset()
+        local centre=btn.AbsolutePosition+btn.AbsoluteSize/2
+        local target=centre+inset
+        mousemoveabs(math.round(target.X),math.round(target.Y))
+        task.wait(.05)
+        if not gui.Parent or not state["fruit.revive.no"] or not isrbxactive() or reviveNoButton()~=btn then return end
+        -- Verify the actual cursor AND the topmost hit before clicking.
+        local cursor=UIS:GetMouseLocation()-inset
+        local pos,size=btn.AbsolutePosition,btn.AbsoluteSize
+        if cursor.X<pos.X+5 or cursor.X>pos.X+size.X-5 or cursor.Y<pos.Y+5 or cursor.Y>pos.Y+size.Y-5 then return end
+        local hits=P.PlayerGui:GetGuiObjectsAtPosition(math.floor(cursor.X),math.floor(cursor.Y))
+        local top=hits[1]
+        if not top or (top~=btn and not top:IsDescendantOf(btn)) then return end
+        reviveLast=os.clock()
+        mouse1click()
+    end)
+    if wasVisible and gui.Parent then visible(true) end
+    if not ok then warn("[Moy Auto No] "..tostring(err)) end
+end
+task.spawn(function()
+    while gui.Parent do
+        local ok,err=pcall(declineRevive)
+        if not ok then warn("[Moy Auto No] "..tostring(err)) end
+        task.wait(.1)
+    end
+end)
+
+-- Loot assistant: walks normally to nearby displayed seed drops and uses the game's E prompt.
+toggle(battle,"เก็บของดรอปอัตโนมัติ","fruit.loot.auto",false)
+slider(battle,"ระยะค้นหาของ (Studs)","fruit.loot.range",10,35,25)
+local lootStatus=label(battle,"เก็บของ: ปิด",11,{Size=UDim2.new(1,0,0,30),TextWrapped=true},"Muted")
+local stageStatus=label(battle,"ฟาร์มด่าน: ปิด",11,{Size=UDim2.new(1,0,0,30),TextWrapped=true},"Muted")
+local lootBusy=false
+local lootMoving=false
+local function stopLootMove()
+    if not lootMoving then return end
+    lootMoving=false
+    local c=P.Character
+    local h=c and c:FindFirstChildOfClass("Humanoid")
+    local r=c and c:FindFirstChild("HumanoidRootPart")
+    if h and r then h:MoveTo(r.Position) end
+end
+local function hud()
+    local f=P.PlayerGui:FindFirstChild("FusionUI")
+    return f and f:FindFirstChild("Hud")
+end
+local function bagFull()
+    local ui=hud()
+    local left=ui and ui:FindFirstChild("BottomLeft")
+    local item=left and left:FindFirstChild("Stat_Seeds")
+    local content=item and item:FindFirstChild("Content")
+    local value=content and content:FindFirstChild("Value")
+    if not value then return false end
+    local a,b=string.match(value.Text,"(%d+)%s*/%s*(%d+)")
+    return a~=nil and b~=nil and tonumber(a)>=tonumber(b)
+end
+local function canRun()
+    if window.Visible then return false,"ซ่อนเมนูเพื่อเริ่ม" end
+    if not isrbxactive() then return false,"พัก: Roblox ไม่ได้ Focus" end
+    if UIS:GetFocusedTextBox() then return false,"พัก: กำลังพิมพ์" end
+    if UIS:IsKeyDown(Enum.KeyCode.W) or UIS:IsKeyDown(Enum.KeyCode.A) or UIS:IsKeyDown(Enum.KeyCode.S) or UIS:IsKeyDown(Enum.KeyCode.D) then lootMoving=false;return false,"พัก: ควบคุมเอง" end
+    return true,""
+end
+local function lootStep()
+    if bagFull() then lootStatus.Text="กระเป๋าเต็ม";return false end
+    local c=P.Character
+    local h=c and c:FindFirstChildOfClass("Humanoid")
+    local root=c and c:FindFirstChild("HumanoidRootPart")
+    local drops=workspace:FindFirstChild("_SeedDrops")
+    if not h or not root or h.Health<=0 or not drops then lootStatus.Text="รอของดรอปในพื้นที่";return false end
+    local nearest,prompt=nil,nil
+    local best=state["fruit.loot.range"] or 25
+    for _,m in ipairs(drops:GetChildren()) do
+        local b=m:FindFirstChild("Body")
+        if b and b:IsA("BasePart") then
+            local q=b:FindFirstChildWhichIsA("ProximityPrompt",true) or m:FindFirstChildWhichIsA("ProximityPrompt",true)
+            local d=(b.Position-root.Position).Magnitude
+            if q and q.Enabled and q.ActionText=="Collect" and q.KeyboardKeyCode==Enum.KeyCode.E and q.HoldDuration==0 and d<best then nearest,prompt,best=b,q,d end
+        end
+    end
+    if not nearest or not prompt then lootStatus.Text="รอของดรอปใกล้ตัว";return false end
+    if best<=math.min(3,prompt.MaxActivationDistance) then
+        stopLootMove()
+        lootStatus.Text="กำลังเก็บ: "..prompt.ObjectText
+        if not state["fruit.loot.auto"] or not gui.Parent or not isrbxactive() then return false end
+        local ok,err=pcall(function() keypress(0x45);task.wait(.06) end)
+        pcall(keyrelease,0x45)
+        if not ok then error(err) end
+        task.wait(.7)
+    else
+        lootMoving=true;h:MoveTo(nearest.Position)
+        lootStatus.Text="เดินไปเก็บ: "..prompt.ObjectText
+    end
+    return true
+end
+-- Normal movement only; never change gates, collisions, or server calls.
+local function gatePart(folder,prefix,n)
+    local m=folder:FindFirstChild(prefix..n)
+    local b=m and m:FindFirstChild("SurfaceGuiPart")
+    return b and b:IsA("BasePart") and b or nil
+end
+local function flat(v) return Vector3.new(v.X,0,v.Z) end
+local function getStage(folder,pos)
+    local found=nil
+    for n=1,24 do
+        local entry=gatePart(folder,"Reco_",n)
+        local exit=gatePart(folder,"Defeat_",n)
+        if entry and exit then
+            local axis=flat(exit.Position-entry.Position)
+            local length=axis.Magnitude
+            if length>1 then
+                local dir=axis.Unit
+                local rel=flat(pos-entry.Position)
+                local along=rel:Dot(dir)
+                local lateral=(rel-dir*along).Magnitude
+                if along>=-1 and along<=length+28 and lateral<=entry.Size.X*.5+10 then
+                    found={n=n,entry=entry,exit=exit,dir=dir,length=length,along=along}
+                end
+            end
+        end
+    end
+    return found
+end
+local function stageStep()
+    local c=P.Character
+    local h=c and c:FindFirstChildOfClass("Humanoid")
+    local root=c and c:FindFirstChild("HumanoidRootPart")
+    local f=workspace:FindFirstChild("_LocalGates")
+    if not h or not root or h.Health<=0 or not f then stopLootMove();stageStatus.Text="รอตัวละครและพื้นที่ด่าน";return end
+    local ui=hud()
+    local bottom=ui and ui:FindFirstChild("BottomCentre")
+    local actions=bottom and bottom:FindFirstChild("Actions")
+    local auto=actions and actions:FindFirstChild("AutoClicker")
+    local host=auto and auto:FindFirstChild("_FeelHost")
+    local btn=host and host:FindFirstChild("AutoClickBtn")
+    local badge=btn and btn:FindFirstChild("Badge")
+    if not badge or badge.Text~="ON" then stopLootMove();stageStatus.Text="เปิด Auto ของเกมก่อน";return end
+    local stage=getStage(f,root.Position)
+    if not stage then stopLootMove();stageStatus.Text="เดินเข้าด่านก่อน";return end
+    local target
+    if stage.exit.CanCollide then
+        target=stage.entry.Position+stage.dir*(stage.length*.76)
+        stageStatus.Text="Stage "..stage.n.." • รอการต่อสู้"
+    else
+        local nextEntry=gatePart(f,"Reco_",stage.n+1)
+        local nextExit=gatePart(f,"Defeat_",stage.n+1)
+        if not nextEntry or not nextExit then stopLootMove();stageStatus.Text="Stage "..stage.n.." • ไม่มีทางต่อที่ตรวจพบ";return end
+        if nextEntry.CanCollide then stopLootMove();stageStatus.Text="Stage "..stage.n.." • รอประตูถัดไป";return end
+        target=nextEntry.Position+stage.dir*14
+        stageStatus.Text="Stage "..stage.n.." → "..(stage.n+1)
+    end
+    target=Vector3.new(target.X,root.Position.Y,target.Z)
+    if flat(target-root.Position).Magnitude>3 then lootMoving=true;h:MoveTo(target) else stopLootMove() end
+end
+local function refreshAutomation()
+    if not state["fruit.loot.auto"] then lootStatus.Text="เก็บของ: ปิด" end
+    if not state["fruit.stage.auto"] then stageStatus.Text="ฟาร์มด่าน: ปิด" end
+    if not state["fruit.loot.auto"] and not state["fruit.stage.auto"] then stopLootMove();return end
+    if lootBusy then return end
+    lootBusy=true
+    task.spawn(function()
+        while gui.Parent and (state["fruit.loot.auto"] or state["fruit.stage.auto"]) do
+            local ok,err=pcall(function()
+                local ready,reason=canRun()
+                if not ready then
+                    stopLootMove()
+                    if state["fruit.loot.auto"] then lootStatus.Text=reason end
+                    if state["fruit.stage.auto"] then stageStatus.Text=reason end
+                    return
+                end
+                local collected=false
+                if state["fruit.loot.auto"] then collected=lootStep() end
+                if state["fruit.stage.auto"] then
+                    if collected then stageStatus.Text="รอเก็บของก่อนเดินต่อ" else stageStep() end
+                elseif not collected then stopLootMove() end
+            end)
+            if not ok then stopLootMove();stageStatus.Text="ผิดพลาด: "..tostring(err);lootStatus.Text="พักระบบ" end
+            task.wait(.5)
+        end
+        stopLootMove();lootBusy=false
+    end)
+end
+controller:SetCallback("fruit.loot.auto",refreshAutomation)
+controller:SetCallback("fruit.stage.auto",refreshAutomation)
+gui.Destroying:Connect(function() state["fruit.loot.auto"]=false;state["fruit.stage.auto"]=false;stopLootMove() end)
+
+toggle(battle,"ใช้พลังพิเศษอัตโนมัติ","fruit.special.auto",false)
+toggle(battle,"ต่อสู้บอสอัตโนมัติ","fruit.boss.auto",false)
+toggle(battle,"ลงเรดอัตโนมัติ","fruit.raid.auto",false)
+action(battle,"ไปที่ Auto ของเกม","fruit.native.auto")
+controller:SetCallback("fruit.native.auto",function()
+    say("ใช้ปุ่ม Auto ที่เกมมีให้ • กด Left ALT เพื่อกลับมายังเมนู")
+    visible(false)
+end)
+local selling=section(fr,"ขายของ","")
+toggle(selling,"ขายเฉพาะเมล็ดที่เลือก","fruit.sell.auto",false)
+local sellStatus=label(selling,"ขายของ: ปิด",11,{Size=UDim2.new(1,0,0,32),TextWrapped=true},"Muted")
+local function sellVisible(node)
+    if not node then return false end
+    while node and node~=P.PlayerGui do
+        if node:IsA("GuiObject") and not node.Visible then return false end
+        if node:IsA("ScreenGui") and not node.Enabled then return false end
+        node=node.Parent
+    end
+    return node==P.PlayerGui
+end
+-- Selective sell: all item and grade selections start disabled.
+local selection=section(fr,"เลือกเมล็ดที่จะขาย","")
+local seedOptions={
+    {"Basic Seed", "10"}, {"Wheat Seed","11"}, {"Bean Seed","13"},
+    {"Sprout Seed","15"}, {"Leaf Seed","17"}, {"Nut Seed","?"}, {"Berry Seed","40*"}
+}
+for _,entry in ipairs(seedOptions) do
+    toggle(selection,entry[1].." ("..entry[2]..")","fruit.sell.seed."..entry[1],false)
+end
+label(selection,"* ราคา Berry จากป้ายดรอป • ? ยังไม่ยืนยัน",10,{Size=UDim2.new(1,0,0,30),TextWrapped=true},"Muted")
+local grades=section(fr,"ระดับที่อนุญาตขาย (ถ้ามี)","")
+local gradeOptions={
+    {"C / N • Common / Normal","common"},
+    {"UC / U • Uncommon","uncommon"},
+    {"R • Rare","rare"},
+    {"SR • Super Rare","superrare"},
+    {"SSR / UR • Ultra Rare","ultrarare"}
+}
+for _,entry in ipairs(gradeOptions) do toggle(grades,entry[1],"fruit.sell.grade."..entry[2],false) end
+label(grades,"ยังไม่พบระดับเหล่านี้ในร้านเมล็ด • ไม่ใช้ราคาเดาระดับ",10,{Size=UDim2.new(1,0,0,36),TextWrapped=true},"Muted")
+local rarityGroups={
+    C="common",N="common",COMMON="common",NORMAL="common",
+    UC="uncommon",U="uncommon",UNCOMMON="uncommon",
+    R="rare",RARE="rare",SR="superrare",["SUPER RARE"]="superrare",
+    SSR="ultrarare",UR="ultrarare",["SUPER SUPER RARE"]="ultrarare",["ULTRA RARE"]="ultrarare"
+}
+local function allowedSeed(itemName,caption,rarity)
+    if not itemName:match("^Seed_%d+$") then return false end
+    local clean=caption:gsub("<[^>]+>",""):gsub("%s+[xX]%d+%s*$",""):match("^%s*(.-)%s*$")
+    local grade=rarity:gsub("<[^>]+>",""):match("^%s*(.-)%s*$"):upper()
+    if grade=="SEED" then return state["fruit.sell.seed."..clean]==true end
+    local group=rarityGroups[grade]
+    return group~=nil and state["fruit.sell.grade."..group]==true
+end
+local function sellButton()
+    local fusion=P.PlayerGui:FindFirstChild("FusionUI")
+    local panel=fusion and fusion:FindFirstChild("SellRoot")
+    local canvas=panel and panel:FindFirstChild("Canvas")
+    local main=canvas and canvas:FindFirstChild("MainFrame")
+    local content=main and main:FindFirstChild("Content")
+    local list=content and content:FindFirstChild("List")
+    if not sellVisible(panel) then return nil,"เปิดร้าน SELL ก่อน" end
+    if not list then return nil,"ไม่พบรายการขาย" end
+    local selected=0
+    for _,item in ipairs(list:GetChildren()) do
+        if item:IsA("GuiObject") and item.Visible then
+            local rarity=item:FindFirstChild("Rarity")
+            local caption=item:FindFirstChild("Name")
+            local one=item:FindFirstChild("SellOne")
+            if rarity and rarity:IsA("TextLabel") and caption and caption:IsA("TextLabel") and allowedSeed(item.Name,caption.Text,rarity.Text) then
+                selected+=1
+                if one and one:IsA("TextButton") and one.Active and sellVisible(one) then
+                    -- Sell one selected item at a time. Never use Sell All.
+                    local price=one:FindFirstChild("Amount",true)
+                    if price and price:IsA("TextLabel") and tonumber(price.Text) and tonumber(price.Text)>0 then
+                        return one,caption.Text:gsub("<[^>]+>","").." • "..price.Text.." Gold"
+                    end
+                end
+            end
+        end
+    end
+    return nil,if selected>0 then "ไม่พบปุ่มขายรายการที่เลือก" else "ไม่มีเมล็ดที่เลือกให้ขาย"
+end
+local sellLast=0
+local function sellStep()
+    if not state["fruit.sell.auto"] then sellStatus.Text="ขายของ: ปิด";return end
+    if window.Visible or not isrbxactive() or UIS:GetFocusedTextBox() then sellStatus.Text="พัก: ซ่อนเมนูและ Focus เกม";return end
+    local btn,reason=sellButton()
+    if not btn then sellStatus.Text=reason;return end
+    if os.clock()-sellLast<2 then return end
+    local inset=game:GetService("GuiService"):GetGuiInset()
+    local center=btn.AbsolutePosition+btn.AbsoluteSize/2
+    local target=center+inset
+    mousemoveabs(math.round(target.X),math.round(target.Y))
+    task.wait(.06)
+    if not gui.Parent or not state["fruit.sell.auto"] or window.Visible or not isrbxactive() or sellButton()~=btn then return end
+    local cursor=UIS:GetMouseLocation()-inset
+    local pos,size=btn.AbsolutePosition,btn.AbsoluteSize
+    if cursor.X<pos.X+5 or cursor.X>pos.X+size.X-5 or cursor.Y<pos.Y+5 or cursor.Y>pos.Y+size.Y-5 then sellStatus.Text="พัก: ตำแหน่งเมาส์ไม่ตรง";return end
+    local hits=P.PlayerGui:GetGuiObjectsAtPosition(math.floor(cursor.X),math.floor(cursor.Y))
+    local top=hits[1]
+    if not top or (top~=btn and not top:IsDescendantOf(btn)) then sellStatus.Text="พัก: มีเมนูอื่นบังปุ่ม";return end
+    sellLast=os.clock()
+    sellStatus.Text="กดขายเมล็ด: "..reason
+    mouse1click()
+end
+task.spawn(function()
+    while gui.Parent do
+        local ok,err=pcall(sellStep)
+        if not ok then sellStatus.Text="ขายของ: "..tostring(err) end
+        task.wait(.4)
+    end
+end)
+local growth=section(fr,"ผลไม้และเรือนกระจก","")
+toggle(growth,"ปลูกเมล็ดอัตโนมัติ","fruit.plant.auto",false)
+toggle(growth,"เก็บผลไม้อัตโนมัติ","fruit.harvest.auto",false)
+toggle(growth,"ใส่ผลไม้ที่ดีที่สุด","fruit.equip.best",false)
+local progress=section(fr,"ความก้าวหน้า","")
+toggle(progress,"เกิดใหม่อัตโนมัติ","fruit.rebirth.auto",false)
+toggle(progress,"ปลดล็อกโลกถัดไป","fruit.world.auto",false)
+toggle(progress,"รับรางวัลอัตโนมัติ","fruit.reward.auto",false)
+local info=section(fr,"สถานะระบบ","")
+label(info,"Auto Collect: เดินตามปกติและกด E",11,{Size=UDim2.new(1,0,0,30),TextWrapped=true},"Muted")
+label(info,"Auto Stage: เปิด Auto เกมก่อน • เก็บของถ้าเปิด Loot",11,{Size=UDim2.new(1,0,0,30),TextWrapped=true},"Muted")
+-- ACCOUNT
+local al,ar=columns(account)
+local a1=section(al,"รับรางวัล","◆")
+toggle(a1,"รับเควสต์","claims.quests",false);toggle(a1,"รับรางวัลรายวัน","claims.daily",false);toggle(a1,"รับ Battle Pass","claims.pass",false);toggle(a1,"รับ Milestones และ Index","claims.index",false);action(a1,"รับโค้ด","claims.codes")
+local a2=section(al,"จัดทีม","♙")
+toggle(a2,"จัดทีมที่ดีที่สุด","team.best",false);toggle(a2,"เพิ่มเลเวลตัวละคร","team.feed",false)
+local a3=section(ar,"สุ่มตัวละคร","✧")
+toggle(a3,"สุ่มอัตโนมัติ","summon.auto",false);dropdown(a3,"ตู้สุ่ม","summon.banner",{"EventClover","Standard"},"EventClover");slider(a3,"เพชรขั้นต่ำ","summon.reserve",0,50000,0);dropdown(a3,"ขายอัตโนมัติ","summon.sell",{"None","Rare","Epic"},"None")
+local a4=section(ar,"ร้านค้า","▣")
+dropdown(a4,"ร้านทอง","shop.gold",{"None","เลือกเอง"},"None");dropdown(a4,"ร้านกิจกรรม","shop.event",{"Off","เลือกเอง"},"Off");toggle(a4,"ซื้อร้านค้าเร่","shop.merchant",false)
+-- SETTINGS
+local sl,sr=columns(settings)
+local s1=section(sl,"เมนู","⚙")
+local r=row(s1,"Menu Keybind");label(r,"ปุ่มเปิด–ปิด",11,{Size=UDim2.new(.55,0,1,0)})
+local kb=button(r,"LeftAlt",{Position=UDim2.new(.55,0,0,2),Size=UDim2.new(.45,0,0,24)})
+local listening=false
+kb.Activated:Connect(function() listening=true;kb.Text="กดปุ่ม..." end)
+connect(UIS.InputBegan,function(i,processed) if listening and not processed and i.KeyCode~=Enum.KeyCode.Unknown then key=i.KeyCode;listening=false;kb.Text=key.Name;visible(true) end end)
+slider(s1,"ขนาดเมนู (%)","ui.scale",70,120,100)
+controller:SetCallback("ui.scale",function(v) requestedScale=v/100;fit() end)
+local palettes={Color3.fromRGB(222,177,246),Color3.fromRGB(117,209,241),Color3.fromRGB(185,155,255),Color3.fromRGB(248,177,199)}
+local function repaint()
+    for _,b in ipairs(bindings) do if b[1].Parent then b[1][b[2]]=theme[b[3]] end end;show(current)
+end
+for _,n in ipairs({"Accent","Background","Sidebar","Section","Header","Outline","Element","Text","Muted"}) do
+    local rr=row(s1,n)
+    label(rr,n,11,{Size=UDim2.new(.72,0,1,0)})
+    local sw=button(rr,"",{Position=UDim2.new(1,-33,0,5),Size=UDim2.fromOffset(33,18)});themed(sw,"BackgroundColor3",n)
+    local j=0
+    sw.Activated:Connect(function() j=j%#palettes+1;theme[n]=palettes[j];repaint() end)
+end
+action(s1,"Unload UI","ui.unload")
+controller:SetCallback("ui.unload",function()gui:Destroy()end)
+local s2=section(sr,"Configs","▣")
+input(s2,"ชื่อ Config","config.name","ชื่อไฟล์");action(s2,"สร้าง Config","config.create");dropdown(s2,"Config","config.current",{"ไม่มี Config"},"ไม่มี Config");action(s2,"บันทึก","config.save");action(s2,"โหลด","config.load");action(s2,"ลบ Config","config.delete");toggle(s2,"Autoload","config.autoload",false)
+local s3=section(sr,"Themes","◈")
+dropdown(s3,"Preset","theme.preset",{"Moy Dark","Moy Cyan","Moy Purple"},"Moy Dark")
+controller:SetCallback("theme.preset",function(v)theme.Accent=v=="Moy Cyan" and palettes[2] or v=="Moy Purple" and palettes[3] or palettes[1];repaint()end)
+input(s3,"ชื่อ Theme","theme.name","ชื่อธีม");action(s3,"สร้าง Theme","theme.create");dropdown(s3,"Theme","theme.current",{"ไม่มี Theme"},"ไม่มี Theme");action(s3,"บันทึกธีม","theme.save");action(s3,"โหลดธีม","theme.load");action(s3,"ลบธีม","theme.delete");action(s3,"ตั้งเป็นค่าเริ่มต้น","theme.default")
+-- Read-only live metrics; no game actions.
+local started=os.clock();local elapsed,frames=0,0
+connect(Run.RenderStepped,function(dt)
+    elapsed+=dt;frames+=1
+    if elapsed>=1 then
+        metrics.Players.Text=tostring(#Players:GetPlayers()).."/"..tostring(Players.MaxPlayers)
+        local secs=math.floor(os.clock()-started);metrics.Session.Text=string.format("%dm %02ds",math.floor(secs/60),secs%60)
+        metrics.FPS.Text=tostring(math.floor(frames/elapsed+.5))
+        local ok,ping=pcall(function()return Stats.Network.ServerStatsItem["Data Ping"]:GetValue() end)
+        metrics.Ping.Text=ok and tostring(math.floor(ping+.5)).."ms" or "—"
+        metrics.Place.Text=tostring(game.PlaceId);metrics.UI.Text="Ready";frames=0;elapsed=0
+    end
+end)
+gui.Destroying:Connect(function() for _,c in ipairs(connections) do c:Disconnect() end end)
+controller.Gui=gui
+controller.Show=visible
+controller.Destroy=function() gui:Destroy() end
+show("Home")
+visible(true)
+return controller
