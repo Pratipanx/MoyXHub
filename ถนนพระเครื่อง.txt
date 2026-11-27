@@ -332,7 +332,7 @@ local function action(name: string, arg: any?): boolean
 end
 -- Normal Humanoid navigation. No teleport or speed modification.
 local Pathfinding=game:GetService("PathfindingService")
-local function walkNear(point:Vector3,reach:number,enabled:()->boolean):boolean
+local function walkNearImpl(point:Vector3,reach:number,enabled:()->boolean):boolean
     if not enabled() then return false end
     local ch=P.Character
     local hum=ch and ch:FindFirstChildOfClass("Humanoid")
@@ -357,6 +357,49 @@ local function walkNear(point:Vector3,reach:number,enabled:()->boolean):boolean
     local overlap=OverlapParams.new();overlap.FilterType=Enum.RaycastFilterType.Exclude;overlap.FilterDescendantsInstances={ch};overlap.RespectCanCollide=true
     local height=hum.HipHeight+root.Size.Y/2
     if hum.RigType==Enum.HumanoidRigType.R6 then local leg=ch:FindFirstChild("Left Leg");if leg and leg:IsA("BasePart") then height+=leg.Size.Y end end
+    -- Direct movement first. Only use pathfinding if the direct trip cannot finish.
+    if cfg.DirectWalk and valid() then
+        local begin=root.Position
+        local saved:{[BasePart]:boolean}={}
+        local connection:RBXScriptConnection?=nil
+        local ok=pcall(function()
+            connection=game:GetService("RunService").Stepped:Connect(function()
+                if not valid() or not cfg.DirectWalk then return end
+                for _,v in ipairs(ch:GetDescendants()) do
+                    if v:IsA("BasePart") and v.CanCollide then
+                        if saved[v]==nil then saved[v]=true end
+                        v.CanCollide=false
+                    end
+                end
+            end)
+            local timeout=os.clock()+math.clamp((begin-point).Magnitude/math.max(hum.WalkSpeed,1)*1.6+3,3,60)
+            local nextMove=0
+            local progressAt=os.clock()
+            local progress=root.Position
+            repeat
+                if os.clock()>=nextMove then hum:MoveTo(point);nextMove=os.clock()+4 end
+                task.wait(.08)
+                if (root.Position-progress).Magnitude>=1 then progress=root.Position;progressAt=os.clock() end
+                if (root.Position-point).Magnitude<=targetRange then
+                    local blocked=false
+                    for _,ob in ipairs(workspace:GetPartBoundsInBox(CFrame.new(root.Position),Vector3.new(2.2,3.8,2.2),overlap)) do
+                        if ob.CanCollide then blocked=true;break end
+                    end
+                    if not blocked then break end
+                end
+            until not valid() or not cfg.DirectWalk or os.clock()>timeout or os.clock()-progressAt>2.2 or root.Position.Y<math.min(begin.Y,point.Y)-5
+        end)
+        if connection then connection:Disconnect() end
+        for part,value in pairs(saved) do if part.Parent then part.CanCollide=value end end
+        stop()
+        task.wait(.2)
+        if ok and valid() and (root.Position-point).Magnitude<=targetRange then
+            ctl.DirectWalkCount=(ctl.DirectWalkCount or 0)+1
+            return true
+        end
+        ctl.DirectWalkFailed=(ctl.DirectWalkFailed or 0)+1
+        if not valid() then return false end
+    end
     -- Leaving a seat can place the avatar above the walkable floor. Walk off it normally first.
     local under=workspace:Raycast(root.Position,-Vector3.yAxis*(height+1),ray)
     if under and (under.Instance:IsA("Seat") or under.Instance.Name=="Seat") then
@@ -405,41 +448,6 @@ local function walkNear(point:Vector3,reach:number,enabled:()->boolean):boolean
         end
     end
     table.sort(candidates,function(a,b) return a.score<b.score end)
-    -- Optional local collision test for short indoor trips; restore on every exit.
-    if cfg.DirectWalk and valid() and candidates[1] and candidates[1].score<=35 and (point-root.Position).Magnitude<=35 then
-        local dest=candidates[1].pos
-        local begin=root.Position
-        local saved:{[BasePart]:boolean}={}
-        local connection:RBXScriptConnection?=nil
-        local reached=false
-        local ok=pcall(function()
-            connection=game:GetService("RunService").Stepped:Connect(function()
-                if not valid() or not cfg.DirectWalk then return end
-                for _,v in ipairs(ch:GetDescendants()) do
-                    if v:IsA("BasePart") and v.CanCollide then
-                        if saved[v]==nil then saved[v]=true end
-                        v.CanCollide=false
-                    end
-                end
-            end)
-            hum:MoveTo(dest)
-            local untilTime=os.clock()+math.clamp(candidates[1].score/math.max(hum.WalkSpeed,1)+1.5,2,5)
-            repeat task.wait(.1)
-                local delta=root.Position-dest
-                if Vector3.new(delta.X,0,delta.Z).Magnitude<1.5 and math.abs(delta.Y-height)<1.5 then reached=true;break end
-            until not valid() or not cfg.DirectWalk or os.clock()>untilTime or root.Position.Y<begin.Y-2
-        end)
-        if connection then connection:Disconnect() end
-        for part,value in pairs(saved) do if part.Parent then part.CanCollide=value end end
-        stop()
-        task.wait(.35)
-        if ok and reached and valid() and (root.Position-point).Magnitude<=targetRange then
-            ctl.DirectWalkCount=(ctl.DirectWalkCount or 0)+1
-            return true
-        end
-        ctl.DirectWalkFailed=(ctl.DirectWalkFailed or 0)+1
-        if not valid() then return false end
-    end
     local deadline=os.clock()+math.clamp((root.Position-point).Magnitude/math.max(hum.WalkSpeed,1)*3+15,18,90)
     for i=1,math.min(#candidates,10) do
         if not valid() or os.clock()>deadline then break end
@@ -477,6 +485,27 @@ local function walkNear(point:Vector3,reach:number,enabled:()->boolean):boolean
     end
     stop()
     return false
+end
+-- Temporary auto-travel speed; restore the player's original speed after every trip.
+local AUTO_WALK_SPEED=28
+local function walkNear(point:Vector3,reach:number,enabled:()->boolean):boolean
+    if not enabled() then return false end
+    local ch=P.Character
+    local hum=ch and ch:FindFirstChildOfClass("Humanoid")
+    local root=ch and ch:FindFirstChild("HumanoidRootPart")
+    if not hum or not root or not root:IsA("BasePart") or hum.Health<=0 then return false end
+    if (root.Position-point).Magnitude<=math.max(2,math.min(reach-.7,6.5)) and not hum.Sit then return true end
+    local oldSpeed=hum.WalkSpeed
+    hum.WalkSpeed=AUTO_WALK_SPEED
+    ctl.LastAutoWalkSpeed=hum.WalkSpeed
+    local ok,result=pcall(walkNearImpl,point,reach,enabled)
+    if hum.Parent then hum.WalkSpeed=oldSpeed end
+    if not ok then
+        if root.Parent and hum.Parent then hum:MoveTo(root.Position);hum:Move(Vector3.zero) end
+        ctl.LastError=tostring(result)
+        return false
+    end
+    return result==true
 end
 local function near(part:BasePart):boolean
     local ok=walkNear(part.Position,7,active)
@@ -824,8 +853,8 @@ end
 flag(Main,"เปิดร้านอัตโนมัติ","เปิดร้านเมื่อร้านปิด","Open")
 flag(Main,"รับลูกค้าอัตโนมัติ","นั่งประจำเคาน์เตอร์และจัดการลูกค้า","Customer")
 local Move=Farm:Section("การเดินทาง")
-flag(Move,"เดินทะลุสิ่งกีดขวาง (ทดลอง)","ใช้ความเร็วปกติในระยะสั้น • ปิดเพื่อกลับไปใช้ Pathfinding","DirectWalk")
-Move:Label("ระยะไกลใช้เส้นทางเดินปกติ")
+flag(Move,"เดินทะลุสิ่งกีดขวาง (ทดลอง)","เดินตรงไปยังเป้าหมายก่อน • ความเร็ว Auto 28","DirectWalk")
+Move:Label("ใช้ Pathfinding สำรองเมื่อเดินตรงไม่สำเร็จ • คืนความเร็วเดิมเมื่อหยุด")
 Main:Label("UPGRADE ทำงานแยกจาก FARM • F8 พักทุกระบบ")
 local Eye = UI:Tab("INSPECT")
 local E = Eye:Section("ระบบแยกพระแท้–เก๊")
