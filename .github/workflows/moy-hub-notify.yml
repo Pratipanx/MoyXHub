@@ -24,7 +24,7 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
-      - name: Send scripts to Discord
+      - name: Replace old script posts in Discord
         env:
           DISCORD_BOT_TOKEN: ${{ secrets.DISCORD_BOT_TOKEN }}
           CHANNEL_ID: '1575741154782089316'
@@ -66,26 +66,61 @@ jobs:
                       '```\n'
                       '📋 กดคัดลอกโค้ดด้านบนเพื่อใช้งาน')
 
-          def send(token, channel, filename):
-              nonce = hashlib.sha256((channel + ':' + os.environ['GITHUB_RUN_ID'] + ':' + filename).encode()).hexdigest()[:24]
-              payload = {'content': message(filename), 'allowed_mentions': {'parse': []}, 'nonce': nonce, 'enforce_nonce': True}
+          def request(token, path, method='GET', payload=None):
               req = urllib.request.Request(
-                  f'https://discord.com/api/v10/channels/{channel}/messages',
-                  data=json.dumps(payload).encode('utf-8'),
-                  headers={'Authorization': 'Bot ' + token, 'Content-Type': 'application/json', 'User-Agent': 'DiscordBot (https://github.com/Pratipanx/MoyXHub, 2.0)'},
-                  method='POST',
+                  'https://discord.com/api/v10' + path,
+                  data=None if payload is None else json.dumps(payload).encode('utf-8'),
+                  headers={'Authorization': 'Bot ' + token, 'Content-Type': 'application/json', 'User-Agent': 'DiscordBot (https://github.com/Pratipanx/MoyXHub, 3.0)'},
+                  method=method,
               )
               for attempt in range(5):
                   try:
                       with urllib.request.urlopen(req, timeout=20) as response:
-                          print(f'Sent {filename}: HTTP {response.status}')
-                          return
+                          body = response.read()
+                          return json.loads(body) if body else None
                   except urllib.error.HTTPError as exc:
                       if exc.code == 429 and attempt < 4:
                           delay = float(json.loads(exc.read()).get('retry_after', 2))
                           time.sleep(max(1, delay) + 0.2)
                           continue
+                      if exc.code == 404 and method == 'DELETE':
+                          return None
                       raise SystemExit(f'Discord HTTP {exc.code}: check token, channel ID, permissions or rate limit.') from None
+
+          def history(token, channel):
+              base = f'/channels/{channel}/messages'
+              before = ''
+              while True:
+                  page = request(token, base + '?limit=100' + before)
+                  if not isinstance(page, list):
+                      raise SystemExit('Unexpected Discord message history response.')
+                  yield from page
+                  if len(page) < 100:
+                      break
+                  before = '&before=' + min((m['id'] for m in page), key=int)
+
+          def matching_posts(messages, bot_id, filename):
+              # Exact full message match: never delete members' messages,
+              # other bots' messages, or posts for another file/map.
+              return [m['id'] for m in messages
+                      if m.get('author', {}).get('id') == bot_id
+                      and not m.get('webhook_id')
+                      and m.get('content') == message(filename)]
+
+          def replace(token, channel, filename, bot_id, messages):
+              old_ids = matching_posts(messages, bot_id, filename)
+              nonce = hashlib.sha256((channel + ':' + os.environ['GITHUB_RUN_ID'] + ':' + filename).encode()).hexdigest()[:24]
+              payload = {'content': message(filename), 'allowed_mentions': {'parse': []}, 'nonce': nonce, 'enforce_nonce': True}
+              base = f'/channels/{channel}/messages'
+              new = request(token, base, 'POST', payload)
+              if not isinstance(new, dict) or not new.get('id') or new.get('author', {}).get('id') != bot_id or new.get('content') != message(filename):
+                  raise SystemExit('New post could not be confirmed; old posts were not deleted.')
+              print(f'Sent {filename}: {new["id"]}')
+              for old_id in old_ids:
+                  if old_id != new['id']:
+                      request(token, base + '/' + old_id, 'DELETE')
+                      print(f'Removed previous post: {old_id}')
+                      time.sleep(0.3)
 
           def main():
               token = os.environ['DISCORD_BOT_TOKEN'].strip()
@@ -99,8 +134,12 @@ jobs:
               selected = scripts(files)
               if not selected:
                   print('No matching script files to announce.')
+                  return
+              channel = os.environ['CHANNEL_ID']
+              bot_id = request(token, '/users/@me')['id']
+              messages = list(history(token, channel))
               for filename in selected:
-                  send(token, os.environ['CHANNEL_ID'], filename)
+                  replace(token, channel, filename, bot_id, messages)
                   time.sleep(1)
 
           if __name__ == '__main__':
