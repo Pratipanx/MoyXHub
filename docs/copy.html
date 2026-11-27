@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="th"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Moy Hub | Copy Script</title>
+<style>
+*{box-sizing:border-box}body{margin:0;min-height:100vh;display:grid;place-items:center;background:#100c19;color:#f4efff;font:16px system-ui,sans-serif;padding:20px}main{width:min(100%,520px);padding:26px;border:1px solid #51406d;border-radius:22px;background:#1b1428;box-shadow:0 12px 50px #0007}small{color:#c5a4ff;letter-spacing:2px;font-weight:800}h1{font-size:27px;margin:12px 0}p{color:#c7bfd5;line-height:1.6}textarea{width:100%;min-height:130px;resize:vertical;background:#100c19;border:1px solid #51406d;color:#e3d4ff;padding:12px;border-radius:10px;font:14px monospace;overflow-wrap:anywhere}button{width:100%;margin-top:16px;padding:16px;border:0;border-radius:12px;background:#7541d4;color:white;font-size:17px;font-weight:800;cursor:pointer}button:disabled{opacity:.5;cursor:default}#status{min-height:26px;margin:12px 0 0;color:#bca8e6}button:focus-visible,textarea:focus-visible{outline:2px solid #bfa1ff;outline-offset:3px}
+</style></head><body><main><small>MOY HUB • FREE SCRIPT</small><h1 id="map">Copy Script</h1><p>กดปุ่มด้านล่างเพื่อคัดลอกโค้ด</p><textarea id="code" readonly aria-label="Script" spellcheck="false"></textarea><button id="copy" disabled>📋 คัดลอก SCRIPT</button><p id="status" role="status" aria-live="polite"></p></main>
+<script>
+'use strict';
+const file = new URLSearchParams(location.search).get('file') || '';
+const code = document.getElementById('code');
+const button = document.getElementById('copy');
+const status = document.getElementById('status');
+const valid = /^[^/\\\u0000-\u001f\u007f]+\.(txt|lua)$/i.test(file) && !file.startsWith('.');
+if (valid) {
+  document.getElementById('map').textContent = file.replace(/\.(txt|lua)$/i, '');
+  code.value = 'loadstring(game:HttpGet("https://raw.githubusercontent.com/Pratipanx/MoyXHub/refs/heads/main/' + encodeURIComponent(file) + '"))()';
+  button.disabled = false;
+} else {
+  status.textContent = 'ไม่พบชื่อไฟล์ Script ที่ถูกต้อง กรุณาเปิดลิงก์จาก Discord';
+}
+button.addEventListener('click', async () => {
+  if (!valid) return;
+  try {
+    if (!navigator.clipboard || !navigator.clipboard.writeText) throw new Error('Clipboard unavailable');
+    await navigator.clipboard.writeText(code.value);
+    status.textContent = '✅ คัดลอกสำเร็จ';
+  } catch (_) {
+    code.focus(); code.select(); code.setSelectionRange(0, code.value.length);
+    let copied = false;
+    try { copied = document.execCommand('copy'); } catch (_) {}
+    status.textContent = copied ? '✅ คัดลอกสำเร็จ' : 'คัดลอกอัตโนมัติไม่ได้ ให้กดค้างที่โค้ดแล้วเลือกคัดลอก';
+  }
+});
+</script></body></html>
