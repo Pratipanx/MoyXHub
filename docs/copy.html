@@ -12,7 +12,7 @@ const status = document.getElementById('status');
 const valid = /^[^/\\\u0000-\u001f\u007f]+\.(txt|lua)$/i.test(file) && !file.startsWith('.');
 if (valid) {
   document.getElementById('map').textContent = file.replace(/\.(txt|lua)$/i, '');
-  code.value = 'loadstring(game:HttpGet("https://raw.githubusercontent.com/Pratipanx/MoyXHub/refs/heads/main/' + encodeURIComponent(file) + '"))()';
+  code.value = 'loadstring(game:HttpGet("https://raw.githubusercontent.com/Pratipanx/MoyXHub/refs/heads/main/' + encodeURIComponent(file) + '?v="..os.time()))()';
   button.disabled = false;
 } else {
   status.textContent = 'ไม่พบชื่อไฟล์ Script ที่ถูกต้อง กรุณาเปิดลิงก์จาก Discord';
