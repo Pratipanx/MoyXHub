@@ -1,0 +1,729 @@
+-- MoyXHub | Amulet Street | Single-file build
+if game.PlaceId ~= 116750055341696 then warn("[MoyXHub] Unsupported place"); return end
+-- Moy Hub | Amulet Street Auto Gameplay
+-- F8 toggles. No reset, no Robux purchases, no teleport.
+local P = game:GetService("Players").LocalPlayer
+local RS = game:GetService("ReplicatedStorage")
+local UIS = game:GetService("UserInputService")
+local R = RS:WaitForChild("ShopRemotes")
+local Act = R:WaitForChild("Act") :: RemoteFunction
+local Push = R:WaitForChild("Push") :: RemoteEvent
+local Look = R:WaitForChild("Look") :: RemoteEvent
+local plot = workspace:WaitForChild("Plots"):WaitForChild("Plot"..tostring(P:GetAttribute("Plot"))):WaitForChild("ShopScene")
+local counter = plot:WaitForChild("Counter")
+local props = plot:WaitForChild("Props")
+local seat = counter.Chair.Seat
+local tray = counter.PendingTray.Base
+local scanner = props.Scanner.Body
+local live = props.LiveSet.Table
+local shelf = counter.ReturnShelf.Base
+local safe = props.Safe.Body
+local cfg = {MaxBuy = 1000, Reserve = 2500, Buy = true, Sell = true, Open = true, Customer = true, Eye = true, Self = true, Scan = true, Cert = true, Store = true, AutoExpand = false, AutoGear = false, UpgradePriority = "ขยายร้านก่อน", Gear_scanSpeed = true, Gear_scanSlots = true, Gear_sign = true, Gear_tray = true, Gear_ringLight = true, Gear_liveSpeed = true, Gear_safeCap = true}
+local loadModule: any = require
+local lab = loadModule(RS:WaitForChild("AmuletLab"))
+local shopConfig = loadModule(RS:WaitForChild("ShopConfig"))
+local function equal(a: any,b: any): boolean
+    if type(a) ~= type(b) then return false end
+    if type(a) ~= "table" then return a == b end
+    for k,v in pairs(a) do if not equal(v,b[k]) then return false end end
+    for k in pairs(b) do if a[k]==nil then return false end end
+    return true
+end
+local function classify(item: any): (boolean?,string)
+    local model = lab.Models[item.Model]
+    local spec = item.Spec
+    if not model or not spec or type(spec.Features)~="table" then return nil,"ข้อมูลไม่ครบ" end
+    local f = spec.Features
+    local ref = lab.Genuine(item.Model).Features
+    if model.Mesh then
+        if type(f.Variant)~="string" then return nil,"ไม่พบพิมพ์" end
+        if f.Variant ~= ref.Variant then return false,"พิมพ์ผิด: "..f.Variant end
+        if f.Proc ~= nil and not equal(f.Proc,ref.Proc) then return false,"ตำหนิผิว/พิมพ์ผิด" end
+    end
+    for k,v in pairs(ref) do
+        if f[k]==nil then return nil,"ขาดข้อมูล "..tostring(k) end
+        if not equal(f[k],v) then return false,"ตำหนิผิด: "..tostring(k) end
+    end
+    for k in pairs(f) do
+        if ref[k]==nil then return nil,"พบข้อมูลพิมพ์เพิ่มเติม "..tostring(k) end
+    end
+    return true,"ตรงกับพิมพ์แท้"
+end
+local env = getgenv()
+-- Bundled mobile-ready MoyXHub dashboard.
+local previous = env.TwoK
+local previousCtl = env.MoyAutoGameplay
+local initialFarm = previous and previous.Flags and previous.Flags.Farm == true or false
+local initialPaused = initialFarm and previousCtl and not previousCtl.Enabled or false
+if previous and previous.Flags then
+    for k,v in pairs(cfg) do
+        if type(previous.Flags[k]) == type(v) then (cfg :: any)[k] = previous.Flags[k] end
+    end
+end
+local oldStats = {}
+if previousCtl then
+    for _,k in ipairs({"Real","Fake","Unknown","SelfCorrect","SelfWrong","UpgradeCount","Accepted","Attempts","LastVerdict","LastReason"}) do oldStats[k]=previousCtl[k] end
+end
+local UI: any = (function()
+-- MoyXHub dashboard UI
+local Players=game:GetService("Players")
+local UIS=game:GetService("UserInputService")
+local TS=game:GetService("TweenService")
+local Core=game:GetService("CoreGui")
+local P=Players.LocalPlayer
+local C={bg=Color3.fromRGB(7,14,27),panel=Color3.fromRGB(16,30,47),line=Color3.fromRGB(36,64,85),text=Color3.fromRGB(235,246,255),muted=Color3.fromRGB(143,169,192),accent=Color3.fromRGB(56,195,255),green=Color3.fromRGB(61,232,173)}
+local UI:any={Visible=false,ToggleKey=Enum.KeyCode.LeftAlt,Motion=true}
+local con={}
+local function connect(s:any,f:any) table.insert(con,s:Connect(f)) end
+local function new(k:string,p:any,props:any):any
+ local o:any=Instance.new(k)
+ for a,b in pairs(props) do o[a]=b end
+ o.Parent=p; return o
+end
+local function round(o:any,r:number) new("UICorner",o,{CornerRadius=UDim.new(0,r)}) end
+local function stroke(o:any,color:any,alpha:number?):any return new("UIStroke",o,{Color=color,Transparency=alpha or 0,Thickness=1}) end
+local function tween(o:any,p:any,d:number?)
+ if not UI.Motion then for k,v in pairs(p) do o[k]=v end; return end
+ TS:Create(o,TweenInfo.new(d or .18,Enum.EasingStyle.Quad,Enum.EasingDirection.Out),p):Play()
+end
+local function frame(p:any,pos:any,size:any,color:any):any return new("Frame",p,{Position=pos,Size=size,BackgroundColor3=color,BorderSizePixel=0}) end
+local function txt(p:any,s:string,pos:any,size:any,n:number,col:any,bold:boolean?):any
+ return new("TextLabel",p,{Position=pos,Size=size,BackgroundTransparency=1,Text=s,TextSize=n+2,Font=bold and Enum.Font.SourceSansSemibold or Enum.Font.SourceSans,TextColor3=col,TextXAlignment=Enum.TextXAlignment.Left,TextTruncate=Enum.TextTruncate.AtEnd})
+end
+local function btn(p:any,s:string,pos:any,size:any,fn:any):any
+ local b=new("TextButton",p,{Position=pos,Size=size,Text=s,TextSize=16,Font=Enum.Font.SourceSansSemibold,TextColor3=C.text,BackgroundColor3=C.panel,BorderSizePixel=0,AutoButtonColor=false})
+ round(b,8); connect(b.Activated,fn); connect(b.MouseEnter,function() tween(b,{BackgroundColor3=Color3.fromRGB(30,56,78)}) end); connect(b.MouseLeave,function() tween(b,{BackgroundColor3=C.panel}) end); return b
+end
+local gui=new("ScreenGui",Core,{Name="MoyXHub",ResetOnSpawn=false,IgnoreGuiInset=true,DisplayOrder=90,Enabled=true})
+local w=frame(gui,UDim2.fromScale(.5,.5),UDim2.fromOffset(940,620),C.bg); w.AnchorPoint=Vector2.new(.5,.5);round(w,15);stroke(w,C.accent,.35);w.ClipsDescendants=true;w.Visible=false
+local sc=new("UIScale",w,{Scale=1})
+local userScale=1
+local compact=false
+local layoutExtras: any=nil
+local responsive: {any}={}
+local function scale(override: Vector2?)
+ local v=override or workspace.CurrentCamera.ViewportSize
+ compact=v.X<820 or v.Y<520
+ local f=if compact then math.min(1,math.max(.65,(v.X-16)/360),math.max(.65,(v.Y-20)/320)) else math.min(1,(v.X-24)/940,(v.Y-24)/620)
+ f=f*userScale
+ local width=if compact then math.min(820,(v.X-16)/f) else 940
+ local height=if compact then math.min(780,(v.Y-20)/f) else 620
+ sc.Scale=f
+ w.Size=UDim2.fromOffset(math.floor(width),math.floor(height))
+ if compact then w.Position=UDim2.fromScale(.5,.5) end
+ if layoutExtras then layoutExtras(width) end
+ for _,fn in ipairs(responsive) do fn(compact) end
+end
+scale();connect(workspace.CurrentCamera:GetPropertyChangedSignal("ViewportSize"),function() scale() end)
+new("UIGradient",w,{Color=ColorSequence.new(Color3.fromRGB(12,25,43),C.bg),Rotation=110})
+local head=frame(w,UDim2.fromOffset(0,0),UDim2.new(1,0,0,53),C.bg);head.BackgroundTransparency=.3
+local logo=txt(head,"◆",UDim2.fromOffset(19,0),UDim2.fromOffset(36,53),29,C.accent,true)
+local title=txt(head,"MoyXHub",UDim2.fromOffset(57,0),UDim2.fromOffset(170,53),25,C.text,true)
+local chip=frame(head,UDim2.fromOffset(231,14),UDim2.fromOffset(120,25),Color3.fromRGB(22,65,91));round(chip,12)
+local ch=txt(chip,"AMULET STREET",UDim2.fromOffset(0,0),UDim2.fromScale(1,1),10,C.accent,true);ch.TextXAlignment=Enum.TextXAlignment.Center
+local search=new("TextBox",head,{Position=UDim2.fromOffset(550,12),Size=UDim2.fromOffset(223,30),BackgroundColor3=C.panel,Text="",PlaceholderText="ค้นหาฟังก์ชัน...",TextColor3=C.text,PlaceholderColor3=C.muted,TextSize=12,Font=Enum.Font.SourceSans,ClearTextOnFocus=false,BorderSizePixel=0});round(search,8)
+local minimize=btn(head,"—",UDim2.new(1,-148,0,9),UDim2.fromOffset(42,36),function() UI:Toggle(false) end)
+local resize=btn(head,"□",UDim2.new(1,-100,0,9),UDim2.fromOffset(42,36),function() userScale=userScale==1 and .82 or 1;scale() end)
+local close=btn(head,"×",UDim2.new(1,-52,0,9),UDim2.fromOffset(42,36),function() UI:Toggle(false) end);close.TextColor3=Color3.fromRGB(255,112,122)
+local nav=new("ScrollingFrame",w,{Position=UDim2.fromOffset(14,57),Size=UDim2.new(1,-28,0,46),BackgroundColor3=Color3.fromRGB(12,24,40),BorderSizePixel=0,ScrollingDirection=Enum.ScrollingDirection.X,AutomaticCanvasSize=Enum.AutomaticSize.X,CanvasSize=UDim2.new(),ScrollBarThickness=3,ScrollBarImageColor3=C.accent,ClipsDescendants=true});round(nav,10);stroke(nav,C.line)
+local navLayout=new("UIListLayout",nav,{FillDirection=Enum.FillDirection.Horizontal,Padding=UDim.new(0,5),HorizontalAlignment=Enum.HorizontalAlignment.Center,VerticalAlignment=Enum.VerticalAlignment.Center,SortOrder=Enum.SortOrder.LayoutOrder})
+local body=frame(w,UDim2.fromOffset(15,113),UDim2.new(1,-30,1,-155),C.bg);body.BackgroundTransparency=1
+local foot=frame(w,UDim2.new(0,14,1,-38),UDim2.new(1,-28,0,30),C.panel);round(foot,9)
+local avatar=new("ImageLabel",foot,{Position=UDim2.fromOffset(7,3),Size=UDim2.fromOffset(24,24),BackgroundTransparency=1,Image=""});round(avatar,12)
+task.spawn(function() local ok,url=pcall(function() return Players:GetUserThumbnailAsync(P.UserId,Enum.ThumbnailType.HeadShot,Enum.ThumbnailSize.Size48x48) end);if ok and avatar.Parent then avatar.Image=url end end)
+local userName=txt(foot,P.DisplayName,UDim2.fromOffset(40,0),UDim2.fromOffset(178,30),12,C.text,true)
+local footer=txt(foot,"● เชื่อมต่อ Roblox  |  Left ALT",UDim2.fromOffset(220,0),UDim2.fromOffset(390,30),12,C.green)
+local version=txt(foot,"MoyXHub  •  LIVE DASHBOARD",UDim2.new(1,-290,0,0),UDim2.fromOffset(280,30),11,C.muted,true);version.TextXAlignment=Enum.TextXAlignment.Right
+layoutExtras=function(width:number)
+ local small=compact and width<650
+ chip.Visible=not small
+ title.Size=UDim2.fromOffset(small and 150 or 170,53)
+ search.Position=small and UDim2.fromOffset(14,53) or UDim2.new(1,-390,0,12)
+ search.Size=small and UDim2.new(1,-28,0,35) or UDim2.fromOffset(223,30)
+ search.TextSize=16
+ nav.Position=UDim2.fromOffset(14,small and 96 or 57)
+ nav.Size=UDim2.new(1,-28,0,compact and 48 or 46)
+ navLayout.HorizontalAlignment=compact and Enum.HorizontalAlignment.Left or Enum.HorizontalAlignment.Center
+ local y=small and 152 or 113
+ body.Position=UDim2.fromOffset(15,y)
+ body.Size=UDim2.new(1,-30,1,-y-45)
+ version.Visible=not compact
+ userName.Size=UDim2.fromOffset(compact and 105 or 178,30)
+ footer.Position=UDim2.fromOffset(compact and 151 or 220,0)
+ footer.Size=compact and UDim2.new(1,-157,0,30) or UDim2.fromOffset(390,30)
+end
+scale()
+local toast=frame(w,UDim2.new(1,-322,1,-114),UDim2.fromOffset(300,67),C.panel);round(toast,10);stroke(toast,C.accent);toast.ZIndex=30;toast.Visible=false
+local toastTitle=txt(toast,"",UDim2.fromOffset(12,5),UDim2.new(1,-24,0,22),13,C.accent,true);toastTitle.ZIndex=31
+local toastBody=txt(toast,"",UDim2.fromOffset(12,26),UDim2.new(1,-24,0,36),12,C.text);toastBody.TextWrapped=true;toastBody.ZIndex=31
+local serial=0
+function UI:Notify(o:any) serial+=1;local n=serial;toastTitle.Text=o.Title or "MoyXHub";toastBody.Text=o.Text or "";toast.Visible=true;task.delay(o.Duration or 3,function() if gui.Parent and serial==n then toast.Visible=false end end) end
+local pages:any={};local order={};local selected:any=nil;local rows:any={};local controls:any={};local metrics:any={};local logs:any={};local logLabels:any={};local lastAction=""
+local statusText="พร้อมใช้งาน"
+local function selectTab(name:string)
+ selected=name
+ for k,p in pairs(pages) do p.page.Visible=k==name;p.button.TextColor3=k==name and C.accent or C.muted;p.border.Color=k==name and C.accent or C.line end
+end
+local function list(p:any,gap:number) return new("UIListLayout",p,{Padding=UDim.new(0,gap),SortOrder=Enum.SortOrder.LayoutOrder}) end
+local function row(p:any,h:number):any local a=frame(p,UDim2.new(),UDim2.new(1,-6,0,h),C.panel);round(a,9);stroke(a,C.line,.3);return a end
+local function register(p:any,o:any,s:string) table.insert(rows,{page=p,object=o,text=s}) end
+local function sectionHeader(p:any,s:string):any local a=row(p,33);a.BackgroundTransparency=.4;txt(a,s,UDim2.fromOffset(12,0),UDim2.new(1,-40,1,0),14,C.accent,true);return a end
+local function dashboard(p:any)
+ local grid=frame(p,UDim2.new(),UDim2.new(1,-6,0,145),C.bg);grid.BackgroundTransparency=1
+ local gl=new("UIGridLayout",grid,{CellSize=UDim2.new(1/3,-6,0,67),CellPadding=UDim2.fromOffset(8,8),SortOrder=Enum.SortOrder.LayoutOrder})
+ table.insert(responsive,function(small:boolean)
+  local cols=if small and w.Size.X.Offset<650 then 2 else 3
+  gl.CellSize=UDim2.new(1/cols,-6,0,72)
+  grid.Size=UDim2.new(1,-6,0,math.ceil(6/cols)*80)
+ end)
+ for _,d in ipairs({{"status","◉  สถานะ"},{"customers","♟  ลูกค้าวันนี้"},{"cash","฿  เงินในเกม"},{"eye","◇  พระแท้ / เก๊"},{"upgrade","↑  อัปเกรดสำเร็จ"},{"level","◆  ระดับร้าน / เลเวล"}}) do
+  local a=frame(grid,UDim2.new(),UDim2.new(),C.panel);round(a,10);stroke(a,C.line);new("UIGradient",a,{Color=ColorSequence.new(Color3.fromRGB(23,46,67),C.panel),Rotation=35})
+  txt(a,d[2],UDim2.fromOffset(12,5),UDim2.new(1,-24,0,21),12,C.muted,true)
+  metrics[d[1]]=txt(a,"—",UDim2.fromOffset(12,26),UDim2.new(1,-24,0,34),21,C.text,true)
+ end
+ local activity=row(p,113);txt(activity,"◷  กิจกรรมล่าสุด",UDim2.fromOffset(12,2),UDim2.new(1,-24,0,25),14,C.accent,true)
+ for i=1,3 do logLabels[i]=txt(activity,"—",UDim2.fromOffset(13,25+(i-1)*26),UDim2.new(1,-26,0,24),12,C.muted) end
+ local progress=row(p,66);txt(progress,"ความคืบหน้าอัปเกรดร้าน",UDim2.fromOffset(12,3),UDim2.new(1,-24,0,24),13,C.text,true)
+ metrics.progress=txt(progress,"—",UDim2.fromOffset(12,27),UDim2.new(1,-24,0,17),11,C.muted)
+ local bar=frame(progress,UDim2.fromOffset(12,48),UDim2.new(1,-24,0,7),Color3.fromRGB(32,56,77));round(bar,4)
+ metrics.fill=frame(bar,UDim2.new(),UDim2.new(0,0,1,0),C.accent);round(metrics.fill,4)
+ new("UIGradient",metrics.fill,{Color=ColorSequence.new(C.green,C.accent)})
+end
+function UI:Tab(name:string):any
+ local page=new("ScrollingFrame",body,{Name="Page_"..name,Size=UDim2.fromScale(1,1),BackgroundTransparency=1,BorderSizePixel=0,ScrollBarThickness=3,ScrollBarImageColor3=C.accent,CanvasSize=UDim2.new(),AutomaticCanvasSize=Enum.AutomaticSize.Y,Visible=false});list(page,7)
+ local b=btn(nav,name,UDim2.new(),UDim2.fromOffset(122,34),function() selectTab(name) end);local edge=stroke(b,C.line,.2)
+ pages[name]={page=page,button=b,border=edge};table.insert(order,name)
+ local heading=txt(page,name,UDim2.new(),UDim2.new(1,-6,0,35),27,C.text,true)
+ local sub=txt(page,({FARM="ระบบเล่นอัตโนมัติ • ข้อมูลสดจากเกม",INSPECT="วิเคราะห์พระแท้และพระเก๊",TRADE="จัดการเงินและการปล่อยเช่า",UPGRADE="พัฒนาร้านและอุปกรณ์",INFO="ข้อมูลและประวัติการทำงาน",SETTINGS="ปรับแต่ง MoyXHub"})[name] or "",UDim2.new(),UDim2.new(1,-6,0,20),12,C.muted)
+ local tab:any={}
+ function tab:Section(s:string):any
+  local header=sectionHeader(page,s);local sect:any={}
+  function sect:Toggle(o:any)
+   local a=row(page,47);local label=txt(a,o.Name,UDim2.fromOffset(12,1),UDim2.new(1,-95,0,24),14,C.text,true)
+   local desc=txt(a,o.Desc or "",UDim2.fromOffset(12,25),UDim2.new(1,-92,0,19),12,C.muted)
+   local v=o.Default==true
+   local sw=btn(a,"",UDim2.new(1,-61,0,10),UDim2.fromOffset(47,27),function() end)
+   local knob=frame(sw,UDim2.fromOffset(3,3),UDim2.fromOffset(21,21),C.text);round(knob,12)
+   local function draw() tween(sw,{BackgroundColor3=v and C.accent or Color3.fromRGB(45,62,81)});tween(knob,{Position=UDim2.fromOffset(v and 24 or 4,4)}) end
+   connect(sw.Activated,function() v=not v;draw();o.Callback(v) end);draw()
+   controls[o.Name]={set=function(n:boolean) v=n;draw();o.Callback(n) end}
+   table.insert(responsive,function(small:boolean)
+    a.Size=UDim2.new(1,-6,0,small and 76 or 52)
+    label.TextWrapped=small;label.TextTruncate=Enum.TextTruncate.None
+    label.Size=UDim2.new(1,-87,0,small and 31 or 25)
+    desc.TextWrapped=small;desc.TextTruncate=Enum.TextTruncate.None
+    desc.Position=UDim2.fromOffset(12,small and 34 or 27)
+    desc.Size=UDim2.new(1,-87,0,small and 38 or 21)
+    sw.Position=UDim2.new(1,-66,.5,-16);sw.Size=UDim2.fromOffset(52,32)
+    knob.Size=UDim2.fromOffset(24,24)
+   end)
+   register(page,a,o.Name.." "..(o.Desc or ""))
+   if name=="FARM" and o.Name=="เล่นอัตโนมัติ" then dashboard(page) end
+  end
+  function sect:Label(s2:string) local a=row(page,38);local t=txt(a,s2,UDim2.fromOffset(12,0),UDim2.new(1,-24,1,0),12,C.muted);t.TextWrapped=true; t.TextTruncate=Enum.TextTruncate.None;table.insert(responsive,function(small:boolean) a.Size=UDim2.new(1,-6,0,small and 48 or 38) end);register(page,a,s2) end
+  function sect:Button(o:any) local a=row(page,48);local b2=btn(a,o.Name,UDim2.fromOffset(5,4),UDim2.new(1,-10,1,-8),o.Callback);register(page,a,o.Name) end
+  function sect:Slider(o:any)
+   local a=row(page,57);txt(a,o.Name,UDim2.fromOffset(12,2),UDim2.new(1,-145,0,25),13,C.text,true)
+   local value=new("TextBox",a,{Position=UDim2.new(1,-112,0,4),Size=UDim2.fromOffset(98,24),Text=tostring(o.Default),TextSize=13,Font=Enum.Font.SourceSansSemibold,TextColor3=C.text,BackgroundColor3=C.bg,BorderSizePixel=0,ClearTextOnFocus=false});round(value,6)
+   local track=frame(a,UDim2.fromOffset(13,36),UDim2.new(1,-26,0,9),C.line);round(track,5)
+   local fill=frame(track,UDim2.new(),UDim2.new(0,0,1,0),C.accent);round(fill,5)
+   local hit=new("TextButton",track,{Size=UDim2.new(1,0,0,23),Position=UDim2.fromOffset(0,-7),BackgroundTransparency=1,Text=""})
+   local v=o.Default
+   local function set(n:number,fire:boolean) v=math.clamp(math.floor((n-o.Min)/o.Step+.5)*o.Step+o.Min,o.Min,o.Max);value.Text=tostring(v);fill.Size=UDim2.new((v-o.Min)/(o.Max-o.Min),0,1,0);if fire then o.Callback(v) end end
+   set(v,false);connect(value.FocusLost,function() set(tonumber(value.Text) or v,true) end)
+   local drag:any=nil;local function slide(x:number) set(o.Min+math.clamp((x-track.AbsolutePosition.X)/track.AbsoluteSize.X,0,1)*(o.Max-o.Min),true) end
+   connect(hit.InputBegan,function(i:any) if i.UserInputType==Enum.UserInputType.MouseButton1 or i.UserInputType==Enum.UserInputType.Touch then drag=i;page.ScrollingEnabled=false;slide(i.Position.X) end end)
+   connect(UIS.InputChanged,function(i:any) if drag and (i==drag or (drag.UserInputType==Enum.UserInputType.MouseButton1 and i.UserInputType==Enum.UserInputType.MouseMovement)) then slide(i.Position.X) end end)
+   connect(UIS.InputEnded,function(i:any) if drag and (i==drag or i.UserInputType==Enum.UserInputType.MouseButton1) then drag=nil;page.ScrollingEnabled=true end end);register(page,a,o.Name)
+  end
+  function sect:Dropdown(o:any)
+   local a=row(page,52);local dropLabel=txt(a,o.Name,UDim2.fromOffset(12,0),UDim2.new(1,-170,0,52),13,C.text,true);dropLabel.TextWrapped=true
+   local open=false;local b2:any;local opts=frame(a,UDim2.fromOffset(9,52),UDim2.new(1,-18,0,#o.Options*42),C.bg);round(opts,7);opts.Visible=false;list(opts,2)
+   b2=btn(a,tostring(o.Default).."  ▾",UDim2.new(1,-152,0,6),UDim2.fromOffset(140,40),function() open=not open;opts.Visible=open;a.Size=UDim2.new(1,-6,0,open and 58+#o.Options*44 or 52) end)
+   for _,v in ipairs(o.Options) do btn(opts,v,UDim2.new(),UDim2.new(1,0,0,40),function() b2.Text=v.."  ▾";open=false;opts.Visible=false;a.Size=UDim2.new(1,-6,0,52);o.Callback(v) end) end
+   register(page,a,o.Name)
+  end
+  return sect
+ end
+ if not selected then selectTab(name) end
+ return tab
+end
+connect(search:GetPropertyChangedSignal("Text"),function()
+ local q=string.lower(search.Text)
+ local found=nil
+ for _,r in ipairs(rows) do local ok=q=="" or string.find(string.lower(r.text),q,1,true)~=nil;r.object.Visible=ok;if ok and q~="" and not found then found=r.page end end
+ if found then for k,p in pairs(pages) do if p.page==found then selectTab(k);break end end end
+end)
+function UI:SetTitle(_s:string) title.Text="MoyXHub" end
+function UI:SetStatus(s:string) statusText=s end
+local floating=new("TextButton",gui,{Name="MenuOrb",AnchorPoint=Vector2.new(1,1),Position=UDim2.new(1,-16,1,-65),Size=UDim2.fromOffset(56,56),BackgroundColor3=Color3.fromRGB(18,54,83),Text="M",Font=Enum.Font.SourceSansBold,TextSize=28,TextColor3=C.accent,AutoButtonColor=false,ZIndex=80,BorderSizePixel=0})
+round(floating,28);stroke(floating,C.accent,.05)
+local orbHint=txt(floating,"เมนู",UDim2.fromOffset(0,37),UDim2.new(1,0,0,15),10,C.text,true);orbHint.TextXAlignment=Enum.TextXAlignment.Center;orbHint.ZIndex=81
+local orbDrag:any=nil;local orbStart:any;local orbPos:any;local moved=false;local suppressUntil=0
+connect(floating.InputBegan,function(i:any) if i.UserInputType==Enum.UserInputType.Touch or i.UserInputType==Enum.UserInputType.MouseButton1 then orbDrag=i;orbStart=i.Position;orbPos=floating.AbsolutePosition+floating.AbsoluteSize;moved=false end end)
+connect(UIS.InputChanged,function(i:any)
+ if orbDrag and (i==orbDrag or (orbDrag.UserInputType==Enum.UserInputType.MouseButton1 and i.UserInputType==Enum.UserInputType.MouseMovement)) then
+  local d=i.Position-orbStart
+  if d.Magnitude>7 then moved=true end
+  if moved then local v=workspace.CurrentCamera.ViewportSize;floating.Position=UDim2.fromOffset(math.clamp(orbPos.X+d.X,60,v.X-5),math.clamp(orbPos.Y+d.Y,60,v.Y-5)) end
+ end
+end)
+connect(UIS.InputEnded,function(i:any) if orbDrag and (i==orbDrag or i.UserInputType==Enum.UserInputType.MouseButton1) then if moved then suppressUntil=os.clock()+.35 end;orbDrag=nil end end)
+connect(floating.Activated,function() if not moved and os.clock()>suppressUntil then UI:Toggle() end end)
+function UI:Toggle(v:boolean?) if v==nil then v=not self.Visible end;self.Visible=v;w.Visible=v;gui.Enabled=true;floating.Text=v and "×" or "M";orbHint.Text=v and "ซ่อน" or "เมนู";if v then scale();w.BackgroundTransparency=.15;tween(w,{BackgroundTransparency=0}) end end
+function UI:TestLayout(v:Vector2)
+ scale(v);local result={compact=compact,width=w.Size.X.Offset,height=w.Size.Y.Offset,scale=sc.Scale,nav=nav.ScrollingDirection.Name,searchWidth=search.Size.X.Offset};scale();return result
+end
+function UI:Destroy() self.Visible=false;for _,c in ipairs(con) do c:Disconnect() end;gui:Destroy() end
+function UI:AddSettingsTab()
+ local t=self:Tab("SETTINGS");local s=t:Section("การแสดงผล")
+ s:Toggle({Name="แอนิเมชัน",Desc="เปิดเอฟเฟกต์การเลื่อนสวิตช์และหน้าต่าง",Default=true,Callback=function(v:boolean) self.Motion=v end})
+ s:Dropdown({Name="ขนาดหน้าต่าง",Options={"ปกติ","เล็ก"},Default="ปกติ",Callback=function(v:string) userScale=v=="เล็ก" and .82 or 1;scale() end})
+ s:Label("Left ALT เปิด/ปิดเมนู • F8 พักการทำงาน")
+ s:Button({Name="ปิด MoyXHub",Callback=function() self:Destroy() end})
+end
+function UI:Update(data:any,c:any,paused:boolean,cfg:any)
+ if not gui.Parent or not metrics.status then return end
+ local isActive=not paused and (c.Enabled or cfg.AutoGear or cfg.AutoExpand)
+ metrics.status.Text=paused and "พักชั่วคราว" or isActive and "กำลังทำงาน" or "พร้อมใช้งาน";metrics.status.TextColor3=isActive and C.green or C.muted
+ metrics.customers.Text=tostring(data and data.DayCustomers or "—")
+ metrics.cash.Text=data and ("฿"..tostring(math.floor(data.Cash or 0))) or "—"
+ metrics.eye.Text=tostring(c.Real).." / "..tostring(c.Fake)
+ metrics.upgrade.Text=tostring(c.UpgradeCount or 0).." ครั้ง"
+ metrics.level.Text=data and (tostring(data.Stage).." / Lv."..tostring(data.Level)) or "—"
+ local n=data and data.Next
+ if n then
+  local need=n.Cost+cfg.Reserve
+  metrics.progress.Text=n.Name.."  •  ฿"..tostring(data.Cash).." / ฿"..tostring(need)
+  tween(metrics.fill,{Size=UDim2.new(math.clamp(data.Cash/math.max(1,need),0,1),0,1,0)},.25)
+ else metrics.progress.Text=data and "ร้านขั้นสูงสุดแล้ว" or "รอข้อมูลเกม";metrics.fill.Size=UDim2.new(data and 1 or 0,0,1,0) end
+ if statusText~=lastAction then lastAction=statusText;table.insert(logs,1,os.date("%H:%M:%S").."  •  "..statusText);if #logs>3 then table.remove(logs) end end
+ for i=1,3 do logLabels[i].Text=logs[i] or "—" end
+ footer.Text=(isActive and "● กำลังทำงาน" or "● เชื่อมต่อแล้ว")..(compact and "" or "  |  Left ALT  •  F8")
+end
+UI.Root=gui;UI.Controls=controls
+connect(UIS.InputBegan,function(i:any,processed:boolean) if not processed and i.KeyCode==UI.ToggleKey then UI:Toggle() end end)
+local drag:any=nil;local start:any;local pos:any
+connect(head.InputBegan,function(i:any) if not compact and (i.UserInputType==Enum.UserInputType.MouseButton1 or i.UserInputType==Enum.UserInputType.Touch) then drag=i;start=i.Position;pos=w.Position end end)
+connect(UIS.InputChanged,function(i:any) if drag and (i==drag or (drag.UserInputType==Enum.UserInputType.MouseButton1 and i.UserInputType==Enum.UserInputType.MouseMovement)) then local d=i.Position-start;w.Position=pos+UDim2.fromOffset(d.X,d.Y) end end)
+connect(UIS.InputEnded,function(i:any) if drag and (i==drag or i.UserInputType==Enum.UserInputType.MouseButton1) then drag=nil end end)
+return UI
+end)()
+assert(UI and UI.Tab and UI.Toggle and UI.SetTitle, "MoyXHub UI unavailable")
+if env.TwoK and env.TwoK.Stop then pcall(env.TwoK.Stop) end
+local old = env.MoyAutoGameplay
+if old and old.Stop then old.Stop() end
+local Hub: any = {Running=true, Flags=cfg, Conns={}, UI=UI}
+Hub.Flags.Farm = initialFarm
+env.TwoK = Hub
+UI:SetTitle("MoyXHub")
+local alive = true
+local connections: {RBXScriptConnection} = {}
+local cleanup: (() -> ())? = nil
+local STATE = {
+    connect = function(signal: RBXScriptSignal, fn: (...any) -> ()) table.insert(connections,signal:Connect(fn)) end,
+    onCleanup = function(fn: () -> ()) cleanup = fn end,
+    alive = function() return alive end,
+}
+local function rare(v: any): boolean
+    local m = lab.Models[v.Model]
+    return not m or m.Tier=="legend" or m.Tier=="ancient"
+end
+local running = initialFarm
+local data: any = nil
+local status = "Starting"
+local attempts = oldStats.Attempts or 0
+local accepted = oldStats.Accepted or 0
+local lastAction = ""
+local lastError = ""
+local ctl: any = {Enabled=running and not initialPaused, Status=status, Accepted=accepted, Attempts=attempts, LastAction="", LastError=""}
+env.MoyAutoGameplay = ctl
+ctl.Classify = classify
+ctl.Real = oldStats.Real or 0
+ctl.Fake = oldStats.Fake or 0
+ctl.Unknown = oldStats.Unknown or 0
+ctl.SelfCorrect = oldStats.SelfCorrect or 0
+ctl.SelfWrong = oldStats.SelfWrong or 0
+ctl.LastVerdict = oldStats.LastVerdict or ""
+ctl.LastReason = oldStats.LastReason or ""
+ctl.Stop = function()
+    alive = false
+    Hub.Running = false
+    for _,conn in ipairs(connections) do conn:Disconnect() end
+    if cleanup then cleanup() end
+end
+local function report(s: string)
+    local changed = status ~= s
+    status = s
+    ctl.Status = s
+    if changed and Hub.Running then pcall(function() UI:SetStatus(s) end) end
+end
+local paused = initialPaused
+local function setFarm(v: boolean)
+    running = v
+    paused = false
+    ctl.Enabled = v
+    Hub.Flags.Farm = v
+    if not v then
+        local h = P.Character and P.Character:FindFirstChildOfClass("Humanoid")
+        if h then h:Move(Vector3.zero) end
+    end
+    report(v and "กำลังทำงาน" or "หยุดการทำงาน")
+end
+Hub.Stop = function()
+    if not Hub.Running then return end
+    ctl.Stop()
+    pcall(function() UI:Destroy() end)
+end
+STATE.connect(Push.OnClientEvent,function(kind, payload)
+    if kind == "state" then data = payload
+    elseif kind == "verdict" and type(payload)=="table" then
+        if payload.Right then ctl.SelfCorrect += 1 else ctl.SelfWrong += 1 end
+        print("[Moy Eye] Server verdict",payload.Right,payload.Genuine)
+    end
+end)
+STATE.connect(UIS.InputBegan,function(input, processed)
+    if not processed and input.KeyCode == Enum.KeyCode.F8 then
+        if running or cfg.AutoExpand or cfg.AutoGear then
+            paused = not paused
+            ctl.Enabled = running and not paused
+            if paused then
+                local h = P.Character and P.Character:FindFirstChildOfClass("Humanoid")
+                if h then h:Move(Vector3.zero) end
+            end
+            report(paused and "พักชั่วคราว (F8)" or "กำลังทำงาน")
+        end
+    end
+end)
+STATE.onCleanup(function()
+    running = false
+    ctl.Enabled = false
+    report("Stopped")
+    local h = P.Character and P.Character:FindFirstChildOfClass("Humanoid")
+    if h then h:Move(Vector3.zero) end
+end)
+local function active(): boolean
+    return running and ctl.Enabled and not paused and STATE.alive()
+end
+local function upgradeActive(): boolean
+    return not paused and STATE.alive() and (cfg.AutoExpand or cfg.AutoGear)
+end
+local function waitFor(t: number): boolean
+    local start = os.clock()
+    repeat task.wait(0.1) until not active() or os.clock()-start >= t
+    return active()
+end
+local function action(name: string, arg: any?): boolean
+    local isUpgrade = name=="upgrade" or name=="buyUp"
+    if isUpgrade then
+        if not upgradeActive() then return false end
+    elseif not active() then return false end
+    attempts += 1
+    lastAction = name
+    ctl.Attempts = attempts
+    ctl.LastAction = name
+    local ok, yes, why = pcall(function() return Act:InvokeServer(name,arg) end)
+    if ok and yes then
+        accepted += 1
+        ctl.Accepted = accepted
+        ctl.LastError = ""
+        print("[Moy Auto] OK",name)
+        if isUpgrade then task.wait(0.8) else waitFor(0.8) end
+        return true
+    end
+    lastError = tostring(ok and why or yes)
+    ctl.LastError = lastError
+    warn("[Moy Auto] Rejected",name,lastError)
+    if isUpgrade then task.wait(3) else waitFor(3) end
+    return false
+end
+local function near(part: BasePart): boolean
+    local char = P.Character
+    local h = char and char:FindFirstChildOfClass("Humanoid")
+    local root = char and char:FindFirstChild("HumanoidRootPart")
+    if not h or not root or not root:IsA("BasePart") then return false end
+    if (root.Position-part.Position).Magnitude <= 7 and not h.Sit then return true end
+    if h.Sit then h.Sit = false; waitFor(0.4) end
+    local dest = part.Position
+    local delta = Vector3.new(root.Position.X-dest.X,0,root.Position.Z-dest.Z)
+    if delta.Magnitude > 3 then dest += delta.Unit*3 end
+    local start = os.clock()
+    repeat
+        h:MoveTo(dest)
+        if not waitFor(0.35) then return false end
+    until (root.Position-part.Position).Magnitude <= 7 or os.clock()-start > 7
+    h:Move(Vector3.zero)
+    return (root.Position-part.Position).Magnitude <= 7
+end
+local function prompt(part: BasePart, name: string): boolean
+    local pr = part:FindFirstChild(name)
+    if not pr or not pr:IsA("ProximityPrompt") or not pr.Enabled then return false end
+    if not near(part) or not active() then return false end
+    fireproximityprompt(pr)
+    waitFor(1)
+    return true
+end
+local function sit(): boolean
+    local h = P.Character and P.Character:FindFirstChildOfClass("Humanoid")
+    if h and h.SeatPart == seat then return true end
+    if not near(seat) then report("Cannot reach chair"); return false end
+    local pr = seat:FindFirstChild("SitPrompt",true)
+    if not pr then pr = counter.Chair:FindFirstChild("SitPrompt",true) end
+    if pr and pr:IsA("ProximityPrompt") and pr.Enabled then
+        fireproximityprompt(pr)
+    elseif h then
+        seat:Sit(h)
+    end
+    waitFor(1)
+    return h ~= nil and h.SeatPart == seat
+end
+local function idsWhere(items: any, pred: (any)->boolean): {any}
+    local ids = {}
+    for _,v in pairs(items or {}) do
+        if v.Id and pred(v) then table.insert(ids,v.Id) end
+    end
+    return ids
+end
+local function atStation(part: BasePart, verb: string, ids: {any})
+    if #ids > 0 then
+        if near(part) then action(verb,{ids=ids}) else report("Cannot reach "..verb) end
+        return true
+    end
+    return false
+end
+local upgradeCooldown = 0
+ctl.UpgradeCount = oldStats.UpgradeCount or 0
+ctl.UpgradeStatus = "ปิดระบบอัปเกรด"
+local gearOrder = {"scanSlots","scanSpeed","liveSpeed","ringLight","sign","tray","safeCap"}
+local function upgradePlan(s: any): (string?,any?,string)
+    if not s or (s.Tutorial and s.Tutorial.Active) then return nil,nil,"รอผ่านบทสอน" end
+    local budget = math.max(0,(s.Cash or 0)-cfg.Reserve)
+    local nextStage = s.Next
+    local stageReady = cfg.AutoExpand and nextStage and not nextStage.Blocked and (s.Level or 0)>= (nextStage.Level or math.huge)
+    local function gearPlan(): (string?,any?,string)
+        if not cfg.AutoGear then return nil,nil,"ปิดอัปเกรดอุปกรณ์" end
+        for _,id in ipairs(gearOrder) do
+            local u = shopConfig.UpgradeById[id]
+            if u and Hub.Flags["Gear_"..id] then
+                local level = (s.Up or {})[id] or 0
+                if level < shopConfig.UpgradeCap(u,s.Stage) then
+                    local cost = shopConfig.UpgradePrice(u,level)
+                    if cost<=budget then return "buyUp",id,u.Name.." ฿"..tostring(cost) end
+                end
+            end
+        end
+        return nil,nil,"อุปกรณ์เต็มหรือเงินไม่พอ"
+    end
+    if cfg.UpgradePriority=="อุปกรณ์ก่อน" then
+        local verb,arg,desc=gearPlan()
+        if verb then return verb,arg,desc end
+    end
+    if stageReady then
+        if nextStage.Cost<=budget then return "upgrade",nil,nextStage.Name.." ฿"..tostring(nextStage.Cost) end
+        if cfg.UpgradePriority=="ขยายร้านก่อน" then
+            return nil,nil,"เก็บเงินขยายร้าน: ขาด ฿"..tostring(math.max(0,nextStage.Cost-budget))
+        end
+    end
+    local verb,arg,desc=gearPlan()
+    if verb then return verb,arg,desc end
+    if cfg.AutoExpand then
+        if not nextStage then return nil,nil,"ร้านขั้นสูงสุดแล้ว" end
+        if nextStage.Blocked then return nil,nil,"ยังไม่ผ่านเงื่อนไขตู้โชว์" end
+        if not stageReady then return nil,nil,"เลเวลยังไม่ถึง" end
+        return nil,nil,"เก็บเงินขยายร้าน"
+    end
+    return nil,nil,desc
+end
+ctl.UpgradePlan = upgradePlan
+local function tryUpgrade(s: any): boolean
+    if not upgradeActive() then return false end
+    if os.clock()<upgradeCooldown then return false end
+    local verb,arg,desc=upgradePlan(s)
+    ctl.UpgradeStatus=desc
+    if not verb then return false end
+    upgradeCooldown=os.clock()+12
+    report("อัปเกรด: "..desc)
+    if action(verb,arg) then
+        ctl.UpgradeCount+=1
+        UI:Notify({Title="อัปเกรดสำเร็จ",Text=desc,Duration=4})
+        upgradeCooldown=os.clock()+5
+    end
+    return true
+end
+local function tick()
+    local s = data
+    if not s then report("Waiting for state"); return end
+    if s.Tutorial and s.Tutorial.Active then
+        report("Tutorial "..tostring(s.Tutorial.Step).."/"..tostring(s.Tutorial.Total)..": "..tostring(s.Tutorial.Text))
+        return
+    end
+    if not s.Open then
+        report("ร้านปิด")
+        if cfg.Open then action("setOpen",true) end
+        return
+    end
+    local carry = s.Carry and s.Carry.Items or {}
+    local raw = idsWhere(carry,function(v) return not v.Done end)
+    local ready = idsWhere(s.Scans,function(v) return v.Done end)
+    local cert = idsWhere(carry,function(v) return v.Done and v.Kind=="cert" end)
+    local sell = idsWhere(carry,function(v)
+        return cfg.Sell and v.Done and v.Kind=="buy" and v.Genuine==true and not v.Lock and not rare(v)
+    end)
+    local store = idsWhere(carry,function(v)
+        return v.Done and v.Kind=="buy" and (v.Genuine~=true or not cfg.Sell or rare(v)) and not v.Lock
+    end)
+    if cfg.Cert and #cert > 0 then report("Return shelf"); atStation(shelf,"toShelf",cert); return end
+    if #sell > 0 then report("List live"); atStation(live,"listLive",sell); return end
+    if cfg.Store and #store > 0 and #(s.Safe or {}) < (s.SafeCap or 20) then report("Store scanned items"); atStation(safe,"toSafe",store); return end
+    if cfg.Scan and #raw > 0 and #(s.Scans or {}) < (s.Slots or 1) then report("Load scanner"); atStation(scanner,"loadScanner",raw); return end
+    if cfg.Scan and #ready > 0 and #carry < (s.CarryMax or 6) then report("Collect scanner"); atStation(scanner,"collectScanner",ready); return end
+    if cfg.Scan and #(s.Pending or {}) > 0 and #carry < (s.CarryMax or 6) then report("Take pending tray"); prompt(tray,"TakePrompt"); return end
+    if #carry >= (s.CarryMax or 6) then report("Carry full; pause for manual review"); return end
+    if not cfg.Customer then report("หยุดรับลูกค้า"); return end
+    if not sit() then report("Waiting to sit at counter"); return end
+    local c = data and data.Customer
+    if not c then report("Waiting for customer"); return end
+    for i,v in ipairs(c.Items or {}) do
+        if v.Stage == "offer" or v.Stage == "return" or v.Stage == "post" then
+            local intent = c.Intent
+            local verdict: boolean?, reason: string = nil,"ปิดระบบแยกพระ"
+            if cfg.Eye then verdict,reason = classify(v) end
+            local word = if verdict==nil then "ไม่แน่ใจ" elseif verdict then "แท้" else "เก๊"
+            ctl.LastVerdict = word
+            ctl.LastReason = reason
+            if verdict==nil then ctl.Unknown+=1 elseif verdict then ctl.Real+=1 else ctl.Fake+=1 end
+            local model = lab.Models[v.Model]
+            local know = (s.Know or {})[v.Model] or 0
+            local bookNeed = model and shopConfig.BookNeed(model) or math.huge
+            local canSelf = cfg.Self and verdict~=nil and know>=bookNeed and ctl.SelfWrong==0
+            local verb = nil
+            local ask = if v.Stage=="post" then v.PostAsk else v.Ask
+            local affordable = cfg.Buy and verdict==true and tonumber(ask) and ask<=cfg.MaxBuy and (s.Cash or 0)-ask>=cfg.Reserve
+            if v.Stage == "return" then
+                if not cfg.Cert then report("รอเปิดระบบคืนใบเซอร์"); return end
+                verb="handBack"
+            elseif v.Stage == "offer" and intent ~= "sell" then
+                if canSelf then verb="self" elseif cfg.Scan then verb="machine" else report("รอเปิดระบบเครื่องตรวจ"); return end
+            elseif affordable then verb=if v.Stage=="post" then "buyPost" else "buy"
+            else verb="pass" end
+            print("[Moy Eye]",v.Model,word,reason,"book",know,bookNeed,"->",verb)
+            report("Inspect "..tostring(v.Model).." | "..word.." -> "..verb)
+            Look:FireServer(i)
+            local t = os.clock()
+            if not waitFor(3.25) then return end
+            local now = data and data.Customer
+            if not now or now.Id~=c.Id or not now.Items[i] or now.Items[i].Stage~=v.Stage then return end
+            local args: any = {i=i,dt=os.clock()-t}
+            if verb=="self" then args.v=verdict end
+            local ok = action(verb,args)
+            if not ok and verb=="self" and cfg.Scan and active() then
+                local latest = data and data.Customer
+                if latest and latest.Id==c.Id and latest.Items[i] and latest.Items[i].Stage=="offer" then
+                    action("machine",{i=i,dt=os.clock()-t})
+                end
+            end
+            return
+        end
+    end
+    report("Customer finished")
+    action("dismiss")
+end
+task.spawn(function()
+    pcall(function() Act:InvokeServer("hello") end)
+    while STATE.alive() do
+        if active() or upgradeActive() then
+            local ok, err = pcall(function()
+                if upgradeActive() and data and tryUpgrade(data) then return end
+                if active() then tick() end
+            end)
+            if not ok then ctl.LastError = tostring(err); warn("[Moy Auto]",err); task.wait(3) end
+        end
+        task.wait(0.6)
+    end
+end)
+local Farm = UI:Tab("FARM")
+local Main = Farm:Section("ระบบเล่นอัตโนมัติ")
+Main:Toggle({Name="เล่นอัตโนมัติ",Desc="เปิดระบบหลักทั้งหมด • F8 พัก/เล่นต่อ",Default=running,Callback=setFarm})
+local function flag(section: any, name: string, desc: string, key: string)
+    section:Toggle({Name=name,Desc=desc,Default=Hub.Flags[key],Callback=function(v: boolean) Hub.Flags[key]=v end})
+end
+flag(Main,"เปิดร้านอัตโนมัติ","เปิดร้านเมื่อร้านปิด","Open")
+flag(Main,"รับลูกค้าอัตโนมัติ","นั่งประจำเคาน์เตอร์และจัดการลูกค้า","Customer")
+Main:Label("UPGRADE ทำงานแยกจาก FARM • F8 พักทุกระบบ")
+local Eye = UI:Tab("INSPECT")
+local E = Eye:Section("ระบบแยกพระแท้–เก๊")
+flag(E,"แยกพระแท้–เก๊","เทียบพิมพ์และตำหนิกับแคตตาล็อก","Eye")
+flag(E,"ตรวจพระด้วยตนเอง","ตรวจเองเมื่อสมุดครบ หยุดตรวจเองเมื่อพบผลผิด","Self")
+flag(E,"ใช้เครื่องตรวจอัตโนมัติ","ส่งตรวจ ถือถาด ใส่เครื่อง และรับผล","Scan")
+flag(E,"คืนพระพร้อมใบเซอร์","ส่งคืนพระลูกค้าหลังตรวจ","Cert")
+E:Button({Name="ดูผลตรวจล่าสุด",Callback=function()
+    UI:Notify({Title="ผลตรวจพระ",Text=(ctl.LastVerdict~="" and ctl.LastVerdict or "ยังไม่มีผล").." • "..ctl.LastReason,Duration=5})
+end})
+local Trade = UI:Tab("TRADE")
+local T = Trade:Section("รับเช่าและปล่อยเช่า")
+flag(T,"รับเช่าพระแท้อัตโนมัติ","ซื้อเฉพาะพระที่จำแนกได้ว่าแท้","Buy")
+T:Slider({Name="ราคาซื้อสูงสุด",Min=100,Max=50000,Step=100,Default=cfg.MaxBuy,Suffix=" ฿",Callback=function(v: number) cfg.MaxBuy=v end})
+T:Slider({Name="เงินสำรองขั้นต่ำ",Min=0,Max=50000,Step=100,Default=cfg.Reserve,Suffix=" ฿",Callback=function(v: number) cfg.Reserve=v end})
+flag(T,"ปล่อยเช่าในไลฟ์","ปล่อยเช่าพระแท้ที่ตรวจแล้ว ยกเว้นระดับตำนาน/โบราณ","Sell")
+flag(T,"เก็บพระเข้าตู้เซฟ","เก็บพระเก๊และพระที่ไม่ขาย รวมถึงพระหายาก","Store")
+local Upgrade = UI:Tab("UPGRADE")
+local U = Upgrade:Section("อัปเกรดอัตโนมัติ")
+flag(U,"ขยายร้านอัตโนมัติ","ตรวจเงิน เลเวล และเงื่อนไขตู้โชว์","AutoExpand")
+flag(U,"อัปเกรดอุปกรณ์อัตโนมัติ","ซื้อเฉพาะรายการที่เปิดไว้และไม่เกินระดับที่เกมอนุญาต","AutoGear")
+U:Dropdown({Name="ลำดับความสำคัญ",Options={"ขยายร้านก่อน","อุปกรณ์ก่อน"},Default=cfg.UpgradePriority,Callback=function(v: string) cfg.UpgradePriority=v end})
+U:Label("ทำงานแยกจาก FARM • F8 พักทุกระบบ")
+U:Label("ใช้เงินสำรองขั้นต่ำจากแท็บ TRADE")
+U:Button({Name="ดูแผนอัปเกรด",Callback=function()
+    local _,_,desc=upgradePlan(data)
+    UI:Notify({Title="แผนอัปเกรด",Text=desc.." | สำเร็จ "..ctl.UpgradeCount.." ครั้ง",Duration=5})
+end})
+local G=Upgrade:Section("เลือกอุปกรณ์")
+flag(G,"เพิ่มช่องเครื่องตรวจ","ตรวจได้หลายองค์พร้อมกัน","Gear_scanSlots")
+flag(G,"แว่นส่องพระ","เพิ่มความรู้จากการตรวจ","Gear_scanSpeed")
+flag(G,"คนดูไลฟ์เยอะขึ้น","ปล่อยเช่าเร็วขึ้น","Gear_liveSpeed")
+flag(G,"ไฟไลฟ์สวย","เพิ่มราคาปล่อยเช่า","Gear_ringLight")
+flag(G,"ป้ายหน้าร้าน","เพิ่มโอกาสลูกค้านักสะสม","Gear_sign")
+flag(G,"ถาดใหญ่ขึ้น","ลูกค้านำพระมามากขึ้น","Gear_tray")
+flag(G,"ขยายตู้เซฟ","เพิ่มพื้นที่จัดเก็บ","Gear_safeCap")
+local Info = UI:Tab("INFO")
+local I = Info:Section("ข้อมูลการทำงาน")
+I:Label("แมพ: ถนนพระเครื่อง")
+I:Label("F8: พัก/เล่นต่อ | "..tostring(UI.ToggleKey.Name)..": เปิด/ปิดเมนู")
+I:Button({Name="ดูสถิติการทำงาน",Callback=function()
+    UI:Notify({Title="สถิติ",Text=string.format("แท้ %d | เก๊ %d | ไม่แน่ใจ %d | ตรวจเองถูก %d | ผิด %d",ctl.Real,ctl.Fake,ctl.Unknown,ctl.SelfCorrect,ctl.SelfWrong),Duration=6})
+end})
+I:Button({Name="ดูสถานะล่าสุด",Callback=function()
+    UI:Notify({Title="สถานะ",Text=ctl.Status.." | สำเร็จ "..ctl.Accepted.."/"..ctl.Attempts.." | "..ctl.LastError,Duration=5})
+end})
+I:Button({Name="พัก/เล่นต่อ",Callback=function()
+    if running or cfg.AutoExpand or cfg.AutoGear then
+        paused = not paused
+        ctl.Enabled = running and not paused
+        if paused then
+            local h = P.Character and P.Character:FindFirstChildOfClass("Humanoid")
+            if h then h:Move(Vector3.zero) end
+        end
+        report(paused and "พักชั่วคราว" or "กำลังทำงาน")
+    else
+        UI:Notify({Title="MoyXHub",Text="เปิด FARM หรือ UPGRADE ก่อน",Duration=3})
+    end
+end})
+UI:AddSettingsTab()
+UI:Notify({Title="MoyXHub",Text="โหลดเสร็จ • เปิดเล่นอัตโนมัติที่ FARM",Duration=3})
+local prismRoot = UI.Root
+if prismRoot then
+    STATE.connect(prismRoot.AncestryChanged,function(_, parent)
+        if parent==nil and alive then ctl.Stop() end
+    end)
+end
+report(running and not paused and "กำลังทำงาน" or "พร้อมใช้งาน")
+task.spawn(function()
+    while STATE.alive() do
+        if UI.Visible then
+            local ok,err=pcall(function() UI:Update(data,ctl,paused,cfg) end)
+            if not ok then warn("[MoyXHub UI]",err) end
+        end
+        task.wait(.5)
+    end
+end)
+UI:Toggle(true)
