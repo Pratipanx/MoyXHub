@@ -18,10 +18,11 @@ local scanner = props.Scanner.Body
 local live = props.LiveSet.Table
 local shelf = counter.ReturnShelf.Base
 local safe = props.Safe.Body
-local cfg = {MaxBuy = 1000, Reserve = 2500, Buy = true, Sell = true, Open = true, Customer = true, Eye = true, Self = true, Scan = true, Cert = true, Store = true, AutoExpand = false, AutoGear = false, UpgradePriority = "ขยายร้านก่อน", Gear_scanSpeed = true, Gear_scanSlots = true, Gear_sign = true, Gear_tray = true, Gear_ringLight = true, Gear_liveSpeed = true, Gear_safeCap = true}
+local cfg = {MaxBuy = 1000, Reserve = 2500, Buy = true, Sell = true, Open = true, Customer = true, Eye = true, Self = true, Scan = true, Cert = true, Store = true, AutoExpand = false, AutoGear = false, UpgradePriority = "ขยายร้านก่อน", Gear_scanSpeed = true, Gear_scanSlots = true, Gear_sign = true, Gear_tray = true, Gear_ringLight = true, Gear_liveSpeed = true, Gear_safeCap = true, AutoDig = false, AutoShovelBuy = false, AutoShovelEquip = false, AutoShovelRepair = false, AutoHire = false, Hire_host = true, Hire_runner = true, Hire_front = true, Hire_seller = true, Hire_clerk = true, FastLook = true}
 local loadModule: any = require
 local lab = loadModule(RS:WaitForChild("AmuletLab"))
 local shopConfig = loadModule(RS:WaitForChild("ShopConfig"))
+local digConfig = loadModule(RS:WaitForChild("DigConfig"))
 local function equal(a: any,b: any): boolean
     if type(a) ~= type(b) then return false end
     if type(a) ~= "table" then return a == b end
@@ -176,7 +177,7 @@ local function dashboard(p:any)
   gl.CellSize=UDim2.new(1/cols,-6,0,72)
   grid.Size=UDim2.new(1,-6,0,math.ceil(6/cols)*80)
  end)
- for _,d in ipairs({{"status","◉  สถานะ"},{"customers","♟  ลูกค้าวันนี้"},{"cash","฿  เงินในเกม"},{"eye","◇  พระแท้ / เก๊"},{"upgrade","↑  อัปเกรดสำเร็จ"},{"level","◆  ระดับร้าน / เลเวล"}}) do
+ for _,d in ipairs({{"status","◉  สถานะ"},{"customers","♟  ลูกค้า (ข้อมูลเกม)"},{"cash","฿  เงินในเกม"},{"eye","◇  พระแท้ / เก๊"},{"upgrade","↑  อัปเกรดสำเร็จ"},{"level","◆  ระดับร้าน / เลเวล"}}) do
   local a=frame(grid,UDim2.new(),UDim2.new(),C.panel);round(a,10);stroke(a,C.line);new("UIGradient",a,{Color=ColorSequence.new(Color3.fromRGB(23,46,67),C.panel),Rotation=35})
   txt(a,d[2],UDim2.fromOffset(12,5),UDim2.new(1,-24,0,21),12,C.muted,true)
   metrics[d[1]]=txt(a,"—",UDim2.fromOffset(12,26),UDim2.new(1,-24,0,34),21,C.text,true)
@@ -194,7 +195,7 @@ function UI:Tab(name:string):any
  local b=btn(nav,name,UDim2.new(),UDim2.fromOffset(122,34),function() selectTab(name) end);local edge=stroke(b,C.line,.2)
  pages[name]={page=page,button=b,border=edge};table.insert(order,name)
  local heading=txt(page,name,UDim2.new(),UDim2.new(1,-6,0,35),27,C.text,true)
- local sub=txt(page,({FARM="ระบบเล่นอัตโนมัติ • ข้อมูลสดจากเกม",INSPECT="วิเคราะห์พระแท้และพระเก๊",TRADE="จัดการเงินและการปล่อยเช่า",UPGRADE="พัฒนาร้านและอุปกรณ์",INFO="ข้อมูลและประวัติการทำงาน",SETTINGS="ปรับแต่ง MoyXHub"})[name] or "",UDim2.new(),UDim2.new(1,-6,0,20),12,C.muted)
+ local sub=txt(page,({FARM="ระบบเล่นอัตโนมัติ • ข้อมูลสดจากเกม",INSPECT="วิเคราะห์พระแท้และพระเก๊",TRADE="จัดการเงินและการปล่อยเช่า",UPGRADE="พัฒนาร้านและอุปกรณ์",DIG="ขุดพระ • กล่อง • พลั่ว",STAFF="จ้างพนักงานและจัดการค่าจ้าง",INFO="ข้อมูลและประวัติการทำงาน",SETTINGS="ปรับแต่ง MoyXHub"})[name] or "",UDim2.new(),UDim2.new(1,-6,0,20),12,C.muted)
  local tab:any={}
  function tab:Section(s:string):any
   local header=sectionHeader(page,s);local sect:any={}
@@ -284,7 +285,7 @@ function UI:AddSettingsTab()
 end
 function UI:Update(data:any,c:any,paused:boolean,cfg:any)
  if not gui.Parent or not metrics.status then return end
- local isActive=not paused and (c.Enabled or cfg.AutoGear or cfg.AutoExpand)
+ local isActive=not paused and (c.Enabled or cfg.AutoGear or cfg.AutoExpand or cfg.AutoDig or cfg.AutoHire or cfg.AutoShovelBuy or cfg.AutoShovelEquip or cfg.AutoShovelRepair)
  metrics.status.Text=paused and "พักชั่วคราว" or isActive and "กำลังทำงาน" or "พร้อมใช้งาน";metrics.status.TextColor3=isActive and C.green or C.muted
  metrics.customers.Text=tostring(data and data.DayCustomers or "—")
  metrics.cash.Text=data and ("฿"..tostring(math.floor(data.Cash or 0))) or "—"
@@ -384,7 +385,7 @@ STATE.connect(Push.OnClientEvent,function(kind, payload)
 end)
 STATE.connect(UIS.InputBegan,function(input, processed)
     if not processed and input.KeyCode == Enum.KeyCode.F8 then
-        if running or cfg.AutoExpand or cfg.AutoGear then
+        if running or cfg.AutoExpand or cfg.AutoGear or cfg.AutoDig or cfg.AutoHire or cfg.AutoShovelBuy or cfg.AutoShovelEquip or cfg.AutoShovelRepair then
             paused = not paused
             ctl.Enabled = running and not paused
             if paused then
@@ -408,6 +409,9 @@ end
 local function upgradeActive(): boolean
     return not paused and STATE.alive() and (cfg.AutoExpand or cfg.AutoGear)
 end
+local function extraActive(): boolean
+    return not paused and STATE.alive() and (cfg.AutoDig or cfg.AutoHire or cfg.AutoShovelBuy or cfg.AutoShovelEquip or cfg.AutoShovelRepair)
+end
 local function waitFor(t: number): boolean
     local start = os.clock()
     repeat task.wait(0.1) until not active() or os.clock()-start >= t
@@ -415,8 +419,11 @@ local function waitFor(t: number): boolean
 end
 local function action(name: string, arg: any?): boolean
     local isUpgrade = name=="upgrade" or name=="buyUp"
+    local isExtra = name=="hire" or name=="digBuy" or name=="digEquip" or name=="digRepair"
     if isUpgrade then
         if not upgradeActive() then return false end
+    elseif isExtra then
+        if not extraActive() then return false end
     elseif not active() then return false end
     attempts += 1
     lastAction = name
@@ -428,13 +435,13 @@ local function action(name: string, arg: any?): boolean
         ctl.Accepted = accepted
         ctl.LastError = ""
         print("[Moy Auto] OK",name)
-        if isUpgrade then task.wait(0.8) else waitFor(0.8) end
+        if isUpgrade or isExtra then task.wait(0.8) else waitFor(0.8) end
         return true
     end
     lastError = tostring(ok and why or yes)
     ctl.LastError = lastError
     warn("[Moy Auto] Rejected",name,lastError)
-    if isUpgrade then task.wait(3) else waitFor(3) end
+    if isUpgrade or isExtra then task.wait(3) else waitFor(3) end
     return false
 end
 local function near(part: BasePart): boolean
@@ -594,6 +601,237 @@ local function tryUpgrade(s: any): boolean
     end
     return true
 end
+-- Independent staff / excavation controls. All movement and spending share the main worker.
+local extraNext=0
+local digNext=0
+local digAttempts=0
+local digSuccess=0
+local digFails=0
+local staffNext=0
+local shovelNext=0
+local digCooldown: {[Instance]:number}={}
+local activeDigPrompt: ProximityPrompt?=nil
+local digKeyHeld=false
+ctl.DigStatus="ปิดระบบขุด"
+ctl.DigSuccess=0
+ctl.DigAttempts=0
+ctl.HireCount=0
+ctl.ShovelStatus="รอข้อมูล"
+ctl.Boxes=0
+STATE.connect(Push.OnClientEvent,function(kind,payload)
+    if kind=="digChest" then
+        ctl.Boxes+=1
+        ctl.DigStatus="ได้รับผลขุด / กล่อง"
+    end
+end)
+local function stopDigInput()
+    if activeDigPrompt then pcall(function() (activeDigPrompt :: ProximityPrompt):InputHoldEnd() end);activeDigPrompt=nil end
+    if digKeyHeld then pcall(function() keyrelease(0x45) end);digKeyHeld=false end
+end
+local function extraWait(t:number,digOnly:boolean?):boolean
+    local deadline=os.clock()+t
+    repeat
+        if not extraActive() or (digOnly and not cfg.AutoDig) then stopDigInput();return false end
+        task.wait(.08)
+    until os.clock()>=deadline
+    return true
+end
+local function promptPoint(pr:ProximityPrompt):Vector3?
+    local a=pr.Parent
+    if a and a:IsA("Attachment") then return a.WorldPosition end
+    if a and a:IsA("BasePart") then return a.Position end
+    return nil
+end
+local function warpExtra(point:Vector3,reach:number):boolean
+    if not extraActive() then return false end
+    local ch=P.Character
+    local hum=ch and ch:FindFirstChildOfClass("Humanoid")
+    local rt=ch and ch:FindFirstChild("HumanoidRootPart")
+    if not ch or not hum or not rt or not rt:IsA("BasePart") or hum.Health<=0 then return false end
+    if hum.Sit then hum.Sit=false;if not extraWait(.35) then return false end end
+    if (rt.Position-point).Magnitude<=math.min(reach-1,4.5) then return true end
+    local ray=RaycastParams.new();ray.FilterType=Enum.RaycastFilterType.Exclude;ray.FilterDescendantsInstances={ch};ray.RespectCanCollide=true
+    local ov=OverlapParams.new();ov.FilterType=Enum.RaycastFilterType.Exclude;ov.FilterDescendantsInstances={ch};ov.RespectCanCollide=true
+    local height=hum.HipHeight+rt.Size.Y/2
+    if hum.RigType==Enum.HumanoidRigType.R6 then local leg=ch:FindFirstChild("Left Leg");if leg and leg:IsA("BasePart") then height+=leg.Size.Y end end
+    local best:Vector3?=nil
+    local score=math.huge
+    for _,radius in ipairs({3.5,4.5,5.5}) do
+        for i=0,7 do
+            local angle=i*math.pi/4
+            local x=point+Vector3.new(math.cos(angle)*radius,0,math.sin(angle)*radius)
+            local hit=workspace:Raycast(x+Vector3.yAxis*5,-Vector3.yAxis*16,ray)
+            if hit and hit.Normal.Y>.85 then
+                local dest=hit.Position+Vector3.yAxis*(height+.08)
+                if (dest-point).Magnitude<reach-1 then
+                    local blocked=false
+                    for _,ob in ipairs(workspace:GetPartBoundsInBox(CFrame.new(hit.Position+Vector3.yAxis*(height+.35)),Vector3.new(2.6,math.max(4.5,height*2-.5),2.6),ov)) do
+                        if ob~=hit.Instance then blocked=true;break end
+                    end
+                    if not blocked then
+                        local d=(dest-rt.Position).Magnitude
+                        if d<score then best=dest;score=d end
+                    end
+                end
+            end
+        end
+    end
+    if not best then return false end
+    local pos=best :: Vector3
+    hum:Move(Vector3.zero);hum:MoveTo(rt.Position)
+    ch:PivotTo(CFrame.lookAt(pos,Vector3.new(point.X,pos.Y,point.Z)))
+    rt.AssemblyLinearVelocity=Vector3.zero;rt.AssemblyAngularVelocity=Vector3.zero
+    ctl.WarpCount=(ctl.WarpCount or 0)+1
+    if not extraWait(.5) then return false end
+    return (rt.Position-point).Magnitude<reach
+end
+local function staffPlan(s:any):any
+    if not s or not s.Staff or not cfg.AutoHire then return nil end
+    local wages=0
+    for _,v in ipairs(shopConfig.Staff) do
+        if (s.Staff.Hired or {})[v.Id] then wages+=shopConfig.StaffWage(v,s.Stage) end
+    end
+    local budget=(s.Cash or 0)-cfg.Reserve-(s.Staff.Owed or 0)-wages*2
+    for _,id in ipairs({"host","runner","seller","front","clerk"}) do
+        for _,v in ipairs(shopConfig.Staff) do
+            if v.Id==id and Hub.Flags["Hire_"..id] and not (s.Staff.Hired or {})[id]
+                and (s.Stage or 0)>=(v.Stage or 1) and (s.Level or 0)>=(v.Level or 1)
+                and budget>=shopConfig.StaffWage(v,s.Stage)*2 then return v end
+        end
+    end
+    return nil
+end
+ctl.StaffPlan=staffPlan
+local function staffTick(s:any):boolean
+    if not cfg.AutoHire or os.clock()<staffNext then return false end
+    local v=staffPlan(s)
+    if not v then return false end
+    staffNext=os.clock()+12
+    report("จ้างพนักงาน: "..v.Name)
+    if action("hire",v.Id) then ctl.HireCount+=1;UI:Notify({Title="จ้างสำเร็จ",Text=v.Name.." • "..v.Role,Duration=4}) end
+    return true
+end
+local function shovelPlan(s:any):(string?,string?,string)
+    if not s or not s.Dig then return nil,nil,"รอข้อมูลพลั่ว" end
+    local d=s.Dig
+    local owned=d.Own or {}
+    local best:any=nil
+    for _,v in ipairs(digConfig.Shovels) do if owned[v.Key] and (not best or v.Index>best.Index) then best=v end end
+    if cfg.AutoShovelBuy then
+        for i=#digConfig.Shovels,1,-1 do
+            local v=digConfig.Shovels[i]
+            if not v.Robux and v.Price>0 and not owned[v.Key] and (not best or v.Index>best.Index)
+                and (s.Cash or 0)-v.Price>=cfg.Reserve then return "digBuy",v.Key,"ซื้อ "..v.Name end
+        end
+    end
+    if cfg.AutoShovelEquip and best and d.Equip~=best.Key then return "digEquip",best.Key,"สวม "..best.Name end
+    local equipped=d.Equip and digConfig.ByKey[d.Equip]
+    if cfg.AutoShovelRepair and equipped and equipped.Repair>0 and (d.Dur or {})[equipped.Key] == 0
+        and (s.Cash or 0)-equipped.Repair>=cfg.Reserve then return "digRepair",equipped.Key,"ซ่อม "..equipped.Name end
+    return nil,nil,equipped and equipped.Name or "ยังไม่ได้ใส่พลั่ว"
+end
+ctl.ShovelPlan=shovelPlan
+local function shovelTick(s:any):boolean
+    if os.clock()<shovelNext then return false end
+    local verb,id,desc=shovelPlan(s)
+    ctl.ShovelStatus=desc
+    if not verb or not id then return false end
+    shovelNext=os.clock()+12
+    local uncle=workspace:FindFirstChild("DigUncle")
+    local pr=uncle and uncle:FindFirstChild("UnclePrompt",true)
+    if not pr or not pr:IsA("ProximityPrompt") then report("ไม่พบร้านพลั่ว");return false end
+    local pt=promptPoint(pr)
+    if not pt or not warpExtra(pt,pr.MaxActivationDistance) then report("เข้าร้านพลั่วไม่ได้");return true end
+    report(desc)
+    if action(verb,id) then shovelNext=os.clock()+5;UI:Notify({Title="พลั่ว",Text=desc.." สำเร็จ",Duration=4}) end
+    return true
+end
+local function diggingGui():Instance?
+    local g=P.PlayerGui:FindFirstChild("DigGui")
+    return g and g:FindFirstChild("DigPanel",true)
+end
+local function resultGui():boolean
+    local g=P.PlayerGui:FindFirstChild("DigGui")
+    return (g~=nil and (g:FindFirstChild("DigChest",true)~=nil or g:FindFirstChild("DigReveal",true)~=nil)) or P.PlayerGui:FindFirstChild("CaseOpen")~=nil
+end
+local function digTick(s:any):boolean
+    if not cfg.AutoDig or os.clock()<digNext then return false end
+    if resultGui() then ctl.DigStatus="รอเปิดกล่อง / ผลขุดอัตโนมัติ";return true end
+    local folder=workspace:FindFirstChild("DigMounds")
+    local rt=P.Character and P.Character:FindFirstChild("HumanoidRootPart")
+    if not folder or not rt or not rt:IsA("BasePart") then ctl.DigStatus="รอกองดิน";digNext=os.clock()+3;return false end
+    if s and s.Dig and not s.Dig.Equip then ctl.DigStatus="ยังไม่ได้ใส่พลั่ว";digNext=os.clock()+5;return false end
+    local target:ProximityPrompt?=nil
+    local targetPt:Vector3?=nil
+    local best=math.huge
+    for _,m in ipairs(folder:GetChildren()) do
+        local pr=m:FindFirstChild("DigPrompt",true)
+        if pr and pr:IsA("ProximityPrompt") and pr.Enabled and (digCooldown[m] or 0)<=os.clock() then
+            local pt=promptPoint(pr)
+            if pt then local d=(pt-rt.Position).Magnitude;if d<best then target=pr;targetPt=pt;best=d end end
+        end
+    end
+    if not target or not targetPt then ctl.DigStatus="รอกองดินเกิดใหม่";digNext=os.clock()+3;return false end
+    local pr=target :: ProximityPrompt
+    local mound=pr:FindFirstAncestorWhichIsA("Model") or pr
+    digCooldown[mound]=os.clock()+15
+    for old in pairs(digCooldown) do if old.Parent==nil then digCooldown[old]=nil end end
+    ctl.DigStatus="วาร์ปไปกองดิน"
+    report(ctl.DigStatus)
+    if not warpExtra(targetPt,pr.MaxActivationDistance) then digNext=os.clock()+3;return true end
+    if not pr.Parent or not pr.Enabled or not cfg.AutoDig then return true end
+    local before=s and s.Dig and s.Dig.Stats and s.Dig.Stats.Digs or 0
+    digAttempts+=1;ctl.DigAttempts=digAttempts
+    ctl.DigStatus="กำลังขุด";report(ctl.DigStatus)
+    local hold=math.max(.2,pr.HoldDuration)+.25
+    local focused=false
+    pcall(function() focused=isrbxactive() end)
+    if focused then
+        local ok=pcall(function() keypress(0x45) end)
+        digKeyHeld=ok
+    end
+    if not digKeyHeld then
+        activeDigPrompt=pr
+        pcall(function() pr:InputHoldBegin() end)
+    end
+    local finished=extraWait(hold,true)
+    stopDigInput()
+    if not finished then return true end
+    extraWait(.6,true)
+    local deadline=os.clock()+12
+    local nextPress=0
+    while cfg.AutoDig and extraActive() and os.clock()<deadline do
+        local panel=diggingGui()
+        if not panel then break end
+        if os.clock()>=nextPress then
+            local focus=false;pcall(function() focus=isrbxactive() end)
+            if not focus then ctl.DigStatus="รอให้ Roblox อยู่หน้าจอเพื่อเล่นมินิเกม";break end
+            pcall(function() keypress(0x20);task.wait(.08);keyrelease(0x20) end)
+            nextPress=os.clock()+.75
+        end
+        task.wait(.12)
+    end
+    local waitEnd=os.clock()+5
+    repeat
+        local after=data and data.Dig and data.Dig.Stats and data.Dig.Stats.Digs or before
+        if after>before then digSuccess+=after-before;ctl.DigSuccess=digSuccess;ctl.DigStatus="ขุดสำเร็จ";report(ctl.DigStatus);break end
+        if not extraActive() or not cfg.AutoDig then break end
+        task.wait(.2)
+    until os.clock()>=waitEnd
+    if ctl.DigStatus~="ขุดสำเร็จ" then digFails+=1;ctl.DigStatus="ยังไม่พบผลขุด • ลองเปิดหน้าต่าง Roblox";report(ctl.DigStatus) else digFails=0 end
+    if digFails>=2 then digNext=os.clock()+15 else digNext=os.clock()+(active() and 18 or 2) end
+    if resultGui() then ctl.DigStatus="รอเกมเปิดกล่องและปิดผลขุด" end
+    return true
+end
+local function extraTick(s:any):boolean
+    if not extraActive() or not s or (s.Tutorial and s.Tutorial.Active) then return false end
+    if resultGui() and cfg.AutoDig then ctl.DigStatus="รอเกมเปิดกล่องอัตโนมัติ";return true end
+    if diggingGui() and cfg.AutoDig then report("รอจบมินิเกมขุด");return true end
+    if os.clock()<extraNext then return false end
+    if staffTick(s) then extraNext=os.clock()+2;return true end
+    if shovelTick(s) then extraNext=os.clock()+2;return true end
+    return digTick(s)
+end
 local function tick()
     local s = data
     if not s then report("Waiting for state"); return end
@@ -654,7 +892,7 @@ local function tick()
             report("Inspect "..tostring(v.Model).." | "..word.." -> "..verb)
             Look:FireServer(i)
             local t = os.clock()
-            if not waitFor(3.25) then return end
+            if not waitFor(cfg.FastLook and 3.1 or 3.25) then return end
             local now = data and data.Customer
             if not now or now.Id~=c.Id or not now.Items[i] or now.Items[i].Stage~=v.Stage then return end
             local args: any = {i=i,dt=os.clock()-t}
@@ -675,14 +913,15 @@ end
 task.spawn(function()
     pcall(function() Act:InvokeServer("hello") end)
     while STATE.alive() do
-        if active() or upgradeActive() then
+        if active() or upgradeActive() or extraActive() then
             local ok, err = pcall(function()
+                if extraActive() and data and extraTick(data) then return end
                 if upgradeActive() and data and tryUpgrade(data) then return end
                 if active() then tick() end
             end)
             if not ok then ctl.LastError = tostring(err); warn("[Moy Auto]",err); task.wait(3) end
         end
-        task.wait(0.6)
+        task.wait(cfg.FastLook and 0.2 or 0.6)
     end
 end)
 local Farm = UI:Tab("FARM")
@@ -698,6 +937,7 @@ Main:Label("UPGRADE ทำงานแยกจาก FARM • F8 พักท�
 local Eye = UI:Tab("INSPECT")
 local E = Eye:Section("ระบบแยกพระแท้–เก๊")
 flag(E,"แยกพระแท้–เก๊","เทียบพิมพ์และตำหนิกับแคตตาล็อก","Eye")
+flag(E,"ส่องพระเร็วขึ้น","รอส่องขั้นต่ำ 3.1 วินาที ไม่ข้ามเวลาที่เกมกำหนด","FastLook")
 flag(E,"ตรวจพระด้วยตนเอง","ตรวจเองเมื่อสมุดครบ หยุดตรวจเองเมื่อพบผลผิด","Self")
 flag(E,"ใช้เครื่องตรวจอัตโนมัติ","ส่งตรวจ ถือถาด ใส่เครื่อง และรับผล","Scan")
 flag(E,"คืนพระพร้อมใบเซอร์","ส่งคืนพระลูกค้าหลังตรวจ","Cert")
@@ -730,6 +970,32 @@ flag(G,"ไฟไลฟ์สวย","เพิ่มราคาปล่อย
 flag(G,"ป้ายหน้าร้าน","เพิ่มโอกาสลูกค้านักสะสม","Gear_sign")
 flag(G,"ถาดใหญ่ขึ้น","ลูกค้านำพระมามากขึ้น","Gear_tray")
 flag(G,"ขยายตู้เซฟ","เพิ่มพื้นที่จัดเก็บ","Gear_safeCap")
+local Dig=UI:Tab("DIG")
+local D=Dig:Section("ระบบขุดพระและเปิดกล่อง")
+flag(D,"ขุดพระอัตโนมัติ","วาร์ปไปกองดินและกดขุดตามเวลาของพลั่ว","AutoDig")
+D:Label("กล่องจากการขุด: เกมเปิดให้เองและระบบรอจนจบ")
+D:Label("หากมินิเกมต้องกดปุ่ม ให้เปิดหน้าต่าง Roblox ไว้")
+D:Button({Name="ดูสถิติการขุด",Callback=function()
+    UI:Notify({Title="ขุดพระ",Text=ctl.DigStatus.." | สำเร็จ "..ctl.DigSuccess.."/"..ctl.DigAttempts.." | ผลขุด/กล่อง "..ctl.Boxes,Duration=6})
+end})
+local DS=Dig:Section("ระบบพลั่ว")
+flag(DS,"ซื้อพลั่วที่ดีที่สุดอัตโนมัติ","ใช้เงินในเกมเท่านั้น เหลือเงินสำรองตาม TRADE","AutoShovelBuy")
+flag(DS,"ใส่พลั่วที่ดีที่สุดอัตโนมัติ","เลือกจากพลั่วที่มีอยู่","AutoShovelEquip")
+flag(DS,"ซ่อมพลั่วเมื่อพัง","ซ่อมเมื่อความทนทานหมดและมีเงินพอ","AutoShovelRepair")
+DS:Button({Name="ดูแผนพลั่ว",Callback=function()
+    local _,_,desc=shovelPlan(data);UI:Notify({Title="พลั่ว",Text=desc,Duration=5})
+end})
+local Staff=UI:Tab("STAFF")
+local ST=Staff:Section("จ้างพนักงานอัตโนมัติ")
+flag(ST,"จ้างพนักงานอัตโนมัติ","ตรวจระดับร้าน เลเวล เงินสำรองและค่าจ้าง","AutoHire")
+flag(ST,"น้องแพร • คนไลฟ์","Hire host","Hire_host")
+flag(ST,"น้องต้น • คนยกถาด","ปลดล็อกร้านระดับ 2","Hire_runner")
+flag(ST,"เจ๊แต๋ว • ผู้ช่วยไลฟ์","ปลดล็อกร้านระดับ 2","Hire_seller")
+flag(ST,"น้องมิว • เด็กหน้าร้าน","ปลดล็อกร้านระดับ 3","Hire_front")
+flag(ST,"น้องเมย์ • ลูกน้องหน้าร้าน","ปลดล็อกร้านระดับ 3","Hire_clerk")
+ST:Button({Name="ดูแผนจ้างพนักงาน",Callback=function()
+    local v=staffPlan(data);UI:Notify({Title="พนักงาน",Text=v and ("จ้าง "..v.Name) or "ไม่มีรายการที่พร้อมจ้าง / ระบบปิด",Duration=5})
+end})
 local Info = UI:Tab("INFO")
 local I = Info:Section("ข้อมูลการทำงาน")
 I:Label("แมพ: ถนนพระเครื่อง")
@@ -741,7 +1007,7 @@ I:Button({Name="ดูสถานะล่าสุด",Callback=function()
     UI:Notify({Title="สถานะ",Text=ctl.Status.." | สำเร็จ "..ctl.Accepted.."/"..ctl.Attempts.." | "..ctl.LastError,Duration=5})
 end})
 I:Button({Name="พัก/เล่นต่อ",Callback=function()
-    if running or cfg.AutoExpand or cfg.AutoGear then
+    if running or cfg.AutoExpand or cfg.AutoGear or cfg.AutoDig or cfg.AutoHire or cfg.AutoShovelBuy or cfg.AutoShovelEquip or cfg.AutoShovelRepair then
         paused = not paused
         ctl.Enabled = running and not paused
         if paused then
@@ -750,7 +1016,7 @@ I:Button({Name="พัก/เล่นต่อ",Callback=function()
         end
         report(paused and "พักชั่วคราว" or "กำลังทำงาน")
     else
-        UI:Notify({Title="MoyXHub",Text="เปิด FARM หรือ UPGRADE ก่อน",Duration=3})
+        UI:Notify({Title="MoyXHub",Text="เปิด FARM, DIG, STAFF หรือ UPGRADE ก่อน",Duration=3})
     end
 end})
 UI:AddSettingsTab()
