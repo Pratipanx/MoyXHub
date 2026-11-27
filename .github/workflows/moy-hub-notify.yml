@@ -52,17 +52,18 @@ jobs:
                              and Path(f).stem.lower() not in ('readme', 'license', 'licence', 'changelog', 'notice', 'requirements')
                              and Path(f).is_file() and not Path(f).is_symlink()})
 
-          def message(filename, legacy=False):
+          def message(filename, legacy=False, cached=False):
               name = Path(filename).stem
               name = name.replace('`', '').replace('\n', ' ').replace('\r', ' ')
               for char in ('*', '_', '~', '|', '>', '[' , ']'):
                   name = name.replace(char, '\\' + char)
               url = 'https://raw.githubusercontent.com/Pratipanx/MoyXHub/refs/heads/main/' + quote(filename, safe='')
+              loader = f'loadstring(game:HttpGet("{url}"))()' if cached else f'loadstring(game:HttpGet("{url}?v="..os.time()))()'
               return (f'**💎 MOY HUB | {name}**\n\n'
                       f'🎮 แมพ : {name}\n'
                       '📜 Script : Free\n\n'
                       '```lua\n'
-                      f'loadstring(game:HttpGet("{url}"))()\n'
+                      f'{loader}\n'
                       '```\n' +
                       ('📋 กดคัดลอกโค้ดด้านบนเพื่อใช้งาน' if legacy else '📋 มือถือ: กดปุ่ม COPY SCRIPT ด้านล่าง'))
 
@@ -105,12 +106,13 @@ jobs:
               return [m['id'] for m in messages
                       if m.get('author', {}).get('id') == bot_id
                       and not m.get('webhook_id')
-                      and m.get('content') in (message(filename), message(filename, legacy=True))]
+                      and m.get('content') in tuple(message(filename, legacy=legacy, cached=cached)
+                                                         for legacy in (False, True) for cached in (False, True))]
 
           def replace(token, channel, filename, bot_id, messages):
               old_ids = matching_posts(messages, bot_id, filename)
               nonce = hashlib.sha256((channel + ':' + os.environ['GITHUB_RUN_ID'] + ':' + filename).encode()).hexdigest()[:24]
-              copy_url = 'https://pratipanx.github.io/MoyXHub/copy.html?file=' + quote(filename, safe='')
+              copy_url = 'https://pratipanx.github.io/MoyXHub/copy.html?file=' + quote(filename, safe='') + '&page=v5'
               payload = {'content': message(filename), 'allowed_mentions': {'parse': []}, 'nonce': nonce, 'enforce_nonce': True,
                          'components': [{'type': 1, 'components': [{'type': 2, 'style': 5, 'label': '📋 COPY SCRIPT (มือถือ)', 'url': copy_url}]}]}
               base = f'/channels/{channel}/messages'
