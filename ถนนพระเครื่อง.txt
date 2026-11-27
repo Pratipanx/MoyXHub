@@ -18,7 +18,7 @@ local scanner = props.Scanner.Body
 local live = props.LiveSet.Table
 local shelf = counter.ReturnShelf.Base
 local safe = props.Safe.Body
-local cfg = {MaxBuy = 1000, Reserve = 2500, Buy = true, Sell = true, Open = true, Customer = true, Eye = true, Self = true, Scan = true, Cert = true, Store = true, AutoExpand = false, AutoGear = false, UpgradePriority = "ขยายร้านก่อน", Gear_scanSpeed = true, Gear_scanSlots = true, Gear_sign = true, Gear_tray = true, Gear_ringLight = true, Gear_liveSpeed = true, Gear_safeCap = true, AutoDig = false, AutoShovelBuy = false, AutoShovelEquip = false, AutoShovelRepair = false, AutoHire = false, Hire_host = true, Hire_runner = true, Hire_front = true, Hire_seller = true, Hire_clerk = true, FastLook = true, DirectWalk = true}
+local cfg = {MinBuy = 1, MaxBuy = 1000, AutoShowroom = false, AutoHaggle = false, HagglePct = 10, AutoBudget = false, Reserve = 2500, Buy = true, Sell = true, Open = true, Customer = true, Eye = true, Self = true, Scan = true, Cert = true, Store = true, AutoExpand = false, AutoGear = false, UpgradePriority = "ขยายร้านก่อน", Gear_scanSpeed = true, Gear_scanSlots = true, Gear_sign = true, Gear_tray = true, Gear_ringLight = true, Gear_liveSpeed = true, Gear_safeCap = true, AutoDig = false, AutoShovelBuy = false, AutoShovelEquip = false, AutoShovelRepair = false, AutoHire = false, Hire_host = true, Hire_runner = true, Hire_front = true, Hire_seller = true, Hire_clerk = true, FastLook = true, DirectWalk = true}
 local loadModule: any = require
 local lab = loadModule(RS:WaitForChild("AmuletLab"))
 local shopConfig = loadModule(RS:WaitForChild("ShopConfig"))
@@ -275,7 +275,7 @@ STATE.connect(Push.OnClientEvent,function(kind, payload)
 end)
 STATE.connect(UIS.InputBegan,function(input, processed)
     if not processed and input.KeyCode == Enum.KeyCode.F8 then
-        if running or cfg.AutoExpand or cfg.AutoGear or cfg.AutoDig or cfg.AutoHire or cfg.AutoShovelBuy or cfg.AutoShovelEquip or cfg.AutoShovelRepair then
+        if running or cfg.AutoExpand or cfg.AutoGear or cfg.AutoDig or cfg.AutoHire or cfg.AutoShovelBuy or cfg.AutoShovelEquip or cfg.AutoShovelRepair or cfg.AutoShowroom then
             ctl.SetPaused(not paused)
         end
     end
@@ -294,7 +294,7 @@ local function upgradeActive(): boolean
     return not paused and STATE.alive() and (cfg.AutoExpand or cfg.AutoGear)
 end
 local function extraActive(): boolean
-    return not paused and STATE.alive() and (cfg.AutoDig or cfg.AutoHire or cfg.AutoShovelBuy or cfg.AutoShovelEquip or cfg.AutoShovelRepair)
+    return not paused and STATE.alive() and (cfg.AutoDig or cfg.AutoHire or cfg.AutoShovelBuy or cfg.AutoShovelEquip or cfg.AutoShovelRepair or cfg.AutoShowroom)
 end
 local function waitFor(t: number): boolean
     local start = os.clock()
@@ -303,7 +303,7 @@ local function waitFor(t: number): boolean
 end
 local function action(name: string, arg: any?): boolean
     local isUpgrade = name=="upgrade" or name=="buyUp"
-    local isExtra = name=="hire" or name=="digBuy" or name=="digEquip" or name=="digRepair"
+    local isExtra = name=="hire" or name=="digBuy" or name=="digEquip" or name=="digRepair" or name=="showPut" or name=="showTake"
     if isUpgrade then
         if not upgradeActive() then return false end
     elseif isExtra then
@@ -557,9 +557,25 @@ local upgradeCooldown = 0
 ctl.UpgradeCount = oldStats.UpgradeCount or 0
 ctl.UpgradeStatus = "ปิดระบบอัปเกรด"
 local gearOrder = {"scanSlots","scanSpeed","liveSpeed","ringLight","sign","tray","safeCap"}
+-- Auto budget: manual values stay intact; effective limits follow the latest cash.
+local function budgetPlan(s:any):any
+    if not cfg.AutoBudget then return {min=cfg.MinBuy,max=cfg.MaxBuy,reserve=cfg.Reserve,ready=true} end
+    local cash=s and tonumber(s.Cash)
+    if not cash or cash~=cash or cash==math.huge or cash==-math.huge then return {min=1,max=0,reserve=0,ready=false} end
+    cash=math.max(0,math.floor(cash))
+    local reserve=math.min(5000000,math.ceil(cash*.30))
+    local max=math.max(0,math.min(5000000,math.floor(cash*.50),cash-reserve))
+    return {min=1,max=max,reserve=reserve,cash=cash,ready=true}
+end
+ctl.BudgetPlan=budgetPlan
+local function reserveFor(s:any):number
+    local p=budgetPlan(s)
+    return p.ready and p.reserve or math.huge
+end
+
 local function upgradePlan(s: any): (string?,any?,string)
     if not s or (s.Tutorial and s.Tutorial.Active) then return nil,nil,"รอผ่านบทสอน" end
-    local budget = math.max(0,(s.Cash or 0)-cfg.Reserve)
+    local budget = math.max(0,(s.Cash or 0)-reserveFor(s))
     local nextStage = s.Next
     local stageReady = cfg.AutoExpand and nextStage and not nextStage.Blocked and (s.Level or 0)>= (nextStage.Level or math.huge)
     local function gearPlan(): (string?,any?,string)
@@ -649,7 +665,7 @@ local function staffPlan(s:any):any
     if not s or not s.Staff or not cfg.AutoHire then return nil end
     local wages=0
     for _,v in ipairs(shopConfig.Staff) do if (s.Staff.Hired or {})[v.Id] then wages+=shopConfig.StaffWage(v,s.Stage) end end
-    local budget=(s.Cash or 0)-cfg.Reserve-(s.Staff.Owed or 0)-wages*2
+    local budget=(s.Cash or 0)-reserveFor(s)-(s.Staff.Owed or 0)-wages*2
     for _,id in ipairs({"host","runner","seller","front","clerk"}) do
         for _,v in ipairs(shopConfig.Staff) do
             if v.Id==id and Hub.Flags["Hire_"..id] and not (s.Staff.Hired or {})[id] and (s.Stage or 0)>=(v.Stage or 1) and (s.Level or 0)>=(v.Level or 1) and budget>=shopConfig.StaffWage(v,s.Stage)*2 then return v end
@@ -669,10 +685,10 @@ local function shovelPlan(s:any):(string?,string?,string)
     if not s or not s.Dig then return nil,nil,"รอข้อมูลพลั่ว" end
     local d=s.Dig;local owned=d.Own or {};local best:any=nil
     for _,v in ipairs(digConfig.Shovels) do if owned[v.Key] and (not best or v.Index>best.Index) then best=v end end
-    if cfg.AutoShovelBuy then for i=#digConfig.Shovels,1,-1 do local v=digConfig.Shovels[i];if not v.Robux and v.Price>0 and not owned[v.Key] and (not best or v.Index>best.Index) and (s.Cash or 0)-v.Price>=cfg.Reserve then return "digBuy",v.Key,"ซื้อ "..v.Name end end end
+    if cfg.AutoShovelBuy then for i=#digConfig.Shovels,1,-1 do local v=digConfig.Shovels[i];if not v.Robux and v.Price>0 and not owned[v.Key] and (not best or v.Index>best.Index) and (s.Cash or 0)-v.Price>=reserveFor(s) then return "digBuy",v.Key,"ซื้อ "..v.Name end end end
     if cfg.AutoShovelEquip and best and d.Equip~=best.Key then return "digEquip",best.Key,"สวม "..best.Name end
     local equipped=d.Equip and digConfig.ByKey[d.Equip]
-    if cfg.AutoShovelRepair and equipped and equipped.Repair>0 and (d.Dur or {})[equipped.Key]==0 and (s.Cash or 0)-equipped.Repair>=cfg.Reserve then return "digRepair",equipped.Key,"ซ่อม "..equipped.Name end
+    if cfg.AutoShovelRepair and equipped and equipped.Repair>0 and (d.Dur or {})[equipped.Key]==0 and (s.Cash or 0)-equipped.Repair>=reserveFor(s) then return "digRepair",equipped.Key,"ซ่อม "..equipped.Name end
     return nil,nil,equipped and equipped.Name or "ยังไม่ได้ใส่พลั่ว"
 end
 ctl.ShovelPlan=shovelPlan
@@ -743,15 +759,110 @@ local function digTick(s:any):boolean
     if resultGui() then ctl.DigStatus="รอเกมเปิดกล่องและปิดผลขุด" end
     return true
 end
+local Market = loadModule(RS:WaitForChild("ShopMarket"))
+local showroomNext=0
+local function showroomWorth(s:any,v:any):number?
+    if not v or not v.Model or not lab.Models[v.Model] then return nil end
+    local ok,price=pcall(Market.price,s.Market,v.Model)
+    if not ok or type(price)~="number" then price=lab.Models[v.Model].Price end
+    if type(price)~="number" then return nil end
+    return math.floor(price*shopConfig.CondMult(v.Condition or 60)/10+.5)*10
+end
+local function showroomPlan(s:any):any
+    local sr=s and s.Showroom
+    if not sr or not sr.Unlocked then return {status="ตู้โชว์ยังไม่ปลดล็อก"} end
+    if type(sr.Groups)~="table" or type(sr.Items)~="table" or type(s.Safe)~="table" then return {status="รอข้อมูลตู้โชว์"} end
+    local best:any=nil
+    local safeCount=0
+    for _,v in pairs(s.Safe) do
+        safeCount+=1
+        if v.Genuine==true and not v.Raw and not v.Lock and type(v.Id)=="string" then
+            local price=showroomWorth(s,v)
+            if price and price>0 and (not best or price>best.price or (price==best.price and v.Id<best.id)) then best={id=v.Id,price=price,model=v.Model} end
+        end
+    end
+    if not best then return {status="รอพระแท้ที่ผ่านเครื่องตรวจในเซฟ"} end
+    local occupied={}
+    local lowest:any=nil
+    for _,v in pairs(sr.Items) do
+        if type(v.Slot)=="number" then
+            occupied[v.Slot]=true
+            if sr.Groups[v.Slot]=="main" and not v.Lock then
+                local price=showroomWorth(s,v)
+                if price and (not lowest or price<lowest.price or (price==lowest.price and v.Slot<lowest.slot)) then lowest={slot=v.Slot,price=price,id=v.Id} end
+            end
+        end
+    end
+    local free=0
+    for i=1,sr.Slots or 0 do if sr.Groups[i]=="main" and not occupied[i] then free+=1 end end
+    if free>0 then return {verb="showPut",arg={Ids={best.id},Group="main"},price=best.price,status="นำพระ ฿"..best.price.." เข้าตู้",id=best.id} end
+    if lowest and best.price>lowest.price and safeCount<(s.SafeCap or 0) then
+        return {verb="showTake",arg=lowest.slot,status="สลับ ฿"..lowest.price.." เป็น ฿"..best.price,price=best.price,oldPrice=lowest.price,id=lowest.id}
+    end
+    return {status="ตู้หลักจัดพระราคาสูงสุดแล้ว หรือเซฟเต็ม"}
+end
+ctl.ShowroomPlan=showroomPlan
+ctl.ShowroomStatus="ปิดระบบจัดตู้โชว์"
+ctl.SetShowroom=function(v:boolean)
+    cfg.AutoShowroom=v
+    showroomNext=0
+    if v then
+        ctl.SetPaused(false)
+        ctl.ShowroomStatus="เปิด • กำลังตรวจตู้โชว์"
+    else
+        ctl.ShowroomStatus="ปิดระบบจัดตู้โชว์"
+    end
+end
+local function showroomTick(s:any):boolean
+    if not cfg.AutoShowroom or os.clock()<showroomNext then return false end
+    local plan=showroomPlan(s)
+    ctl.ShowroomStatus=plan.status
+    if not plan.verb then showroomNext=os.clock()+5;return false end
+    showroomNext=os.clock()+5
+    report(plan.status)
+    if action(plan.verb,plan.arg) then
+        showroomNext=os.clock()+2
+        ctl.ShowroomStatus="ส่งคำสั่งสำเร็จ • ตรวจข้อมูลใหม่"
+    else
+        showroomNext=os.clock()+10
+        ctl.ShowroomStatus="เกมไม่อนุญาต • รอลองใหม่"
+    end
+    return true
+end
+
 local function extraTick(s:any):boolean
     if not extraActive() or not s or (s.Tutorial and s.Tutorial.Active) then return false end
     if resultGui() and cfg.AutoDig then ctl.DigStatus="รอเกมเปิดกล่องอัตโนมัติ";return true end
     if diggingGui() and cfg.AutoDig then report("รอจบมินิเกมขุด");return true end
     if os.clock()<extraNext then return false end
+    if showroomTick(s) then extraNext=os.clock()+2;return true end
     if staffTick(s) then extraNext=os.clock()+2;return true end
     if shovelTick(s) then extraNext=os.clock()+2;return true end
     return digTick(s)
 end
+local haggleSeen={}
+local haggleCustomer=nil
+ctl.HaggleStatus="ปิดระบบต่อราคา"
+local function buyAllowed(s:any,verdict:boolean?,price:number?):boolean
+    local p=budgetPlan(s)
+    return p.ready and cfg.Buy and verdict==true and price~=nil and price>=p.min and price<=p.max and (s.Cash or 0)-price>=p.reserve
+end
+local function hagglePlan(s:any,c:any,v:any,i:number,verdict:boolean?,attempted:boolean):number?
+    if not cfg.AutoHaggle or attempted or not cfg.Buy or verdict~=true or not s.Cases or not s.Cases.Unlocked then return nil end
+    if c.Intent=="cert" or c.Intent=="pickup" or (v.Stage~="post" and (v.Stage~="offer" or c.Intent~="sell")) then return nil end
+    if type(c.Patience)=="number" and c.Patience<=1 then return nil end
+    local price=tonumber(if v.Stage=="post" then v.PostAsk else v.Ask)
+    local pct=tonumber(cfg.HagglePct)
+    if not price or (pct~=5 and pct~=10 and pct~=20) then return nil end
+    local allowed=false
+    for _,n in ipairs(s.Cases.Haggle or {5,10,20}) do if n==pct then allowed=true end end
+    if not allowed then return nil end
+    local proposed=math.floor(price*(1-pct/100)/10+.5)*10
+    if proposed>=price or not buyAllowed(s,verdict,proposed) then return nil end
+    return pct
+end
+ctl.HagglePlan=hagglePlan
+
 local function tick()
     local s = data
     if not s then report("Waiting for state"); return end
@@ -785,6 +896,7 @@ local function tick()
     if not sit() then report("Waiting to sit at counter"); return end
     local c = data and data.Customer
     if not c then report("Waiting for customer"); return end
+    if haggleCustomer~=c.Id then haggleCustomer=c.Id;table.clear(haggleSeen) end
     for i,v in ipairs(c.Items or {}) do
         if v.Stage == "offer" or v.Stage == "return" or v.Stage == "post" then
             local intent = c.Intent
@@ -800,12 +912,16 @@ local function tick()
             local canSelf = cfg.Self and verdict~=nil and know>=bookNeed and ctl.SelfWrong==0
             local verb = nil
             local ask = if v.Stage=="post" then v.PostAsk else v.Ask
-            local affordable = cfg.Buy and verdict==true and tonumber(ask) and ask<=cfg.MaxBuy and (s.Cash or 0)-ask>=cfg.Reserve
+            local price = tonumber(ask)
+            local affordable = buyAllowed(s,verdict,price)
+            local haggleKey=tostring(v.Id or i)
+            local discount=hagglePlan(s,c,v,i,verdict,haggleSeen[haggleKey]==true)
             if v.Stage == "return" then
                 if not cfg.Cert then report("รอเปิดระบบคืนใบเซอร์"); return end
                 verb="handBack"
             elseif v.Stage == "offer" and intent ~= "sell" then
                 if canSelf then verb="self" elseif cfg.Scan then verb="machine" else report("รอเปิดระบบเครื่องตรวจ"); return end
+            elseif discount then verb="haggle"
             elseif affordable then verb=if v.Stage=="post" then "buyPost" else "buy"
             else verb="pass" end
             print("[Moy Eye]",v.Model,word,reason,"book",know,bookNeed,"->",verb)
@@ -816,6 +932,20 @@ local function tick()
             local now = data and data.Customer
             if not now or now.Id~=c.Id or not now.Items[i] or now.Items[i].Stage~=v.Stage then return end
             local args: any = {i=i,dt=os.clock()-t}
+            local currentItem=now.Items[i]
+            if verb=="haggle" then
+                local pct=hagglePlan(data,now,currentItem,i,verdict,haggleSeen[haggleKey]==true)
+                if not pct then return end
+                haggleSeen[haggleKey]=true
+                args={i=i,pct=pct}
+                ctl.HaggleStatus="เสนอส่วนลด "..pct.."%"
+                local success=action("haggle",args)
+                ctl.HaggleStatus=success and "ส่งข้อเสนอแล้ว • ตรวจราคาล่าสุด" or "ข้อเสนอไม่สำเร็จ • ไม่ต่อซ้ำ"
+                return
+            elseif verb=="buy" or verb=="buyPost" then
+                local currentPrice=tonumber(if currentItem.Stage=="post" then currentItem.PostAsk else currentItem.Ask)
+                if not buyAllowed(data,verdict,currentPrice) then return end
+            end
             if verb=="self" then args.v=verdict end
             local ok = action(verb,args)
             if not ok and verb=="self" and cfg.Scan and active() then
@@ -869,10 +999,48 @@ end})
 local Trade = UI:Tab("TRADE")
 local T = Trade:Section("รับเช่าและปล่อยเช่า")
 flag(T,"รับเช่าพระแท้อัตโนมัติ","ซื้อเฉพาะพระที่จำแนกได้ว่าแท้","Buy")
-T:Slider({Name="ราคาซื้อสูงสุด",Min=100,Max=5000000,Step=100,Default=cfg.MaxBuy,Suffix=" ฿",Callback=function(v: number) cfg.MaxBuy=v end})
-T:Slider({Name="เงินสำรองขั้นต่ำ",Min=0,Max=50000,Step=100,Default=cfg.Reserve,Suffix=" ฿",Callback=function(v: number) cfg.Reserve=v end})
+local budgetSliders={}
+local function manualBudget(key:string,v:number)
+    if not cfg.AutoBudget then cfg[key]=math.clamp(math.floor(v),key=="Reserve" and 0 or 1,5000000) end
+end
+budgetSliders.MinBuy=T:Slider({Name="ราคาซื้อขั้นต่ำ",Min=1,Max=5000000,Step=1,Default=cfg.MinBuy,Suffix=" ฿",Callback=function(v:number) manualBudget("MinBuy",v) end})
+budgetSliders.MaxBuy=T:Slider({Name="ราคาซื้อสูงสุด",Min=1,Max=5000000,Step=1,Default=cfg.MaxBuy,Suffix=" ฿",Callback=function(v:number) manualBudget("MaxBuy",v) end})
+T:Label("หากราคาขั้นต่ำสูงกว่าขั้นสูง ระบบจะไม่รับเช่า")
+budgetSliders.Reserve=T:Slider({Name="เงินสำรองขั้นต่ำ",Min=0,Max=5000000,Step=1,Default=cfg.Reserve,Suffix=" ฿",Callback=function(v:number) manualBudget("Reserve",v) end})
+local function syncBudget()
+    local p=budgetPlan(data)
+    if not p.ready then return end
+    local vals={MinBuy=p.min,MaxBuy=math.max(1,p.max),Reserve=p.reserve}
+    for k,v in pairs(vals) do local slider=budgetSliders[k];if slider:Get()~=v then slider:Set(v,true) end end
+end
+ctl.BudgetSliders=budgetSliders
+ctl.AutoBudgetToggle=T:Toggle({Name="ปรับงบซื้ออัตโนมัติ",Desc="ซื้อไม่เกิน 50% ของเงิน • สำรอง 30% • เพดาน 5M",Default=cfg.AutoBudget,Callback=function(v:boolean) cfg.AutoBudget=v;syncBudget() end})
+T:Label("เปิด Auto เพื่อปรับตามยอดเงิน • ปิด Auto คืนค่าเดิม")
+T:Button({Name="ดูงบปัจจุบัน",Callback=function()
+    local p=budgetPlan(data)
+    UI:Notify({Title="งบรับเช่า",Text=p.ready and ("ขั้นต่ำ "..p.min.." | สูงสุด "..p.max.." | สำรอง "..p.reserve) or "รอข้อมูลยอดเงิน",Duration=5})
+end})
+task.spawn(function()
+    while STATE.alive() do
+        if cfg.AutoBudget then pcall(syncBudget) end
+        task.wait(.5)
+    end
+end)
 flag(T,"ปล่อยเช่าในไลฟ์","ปล่อยเช่าพระแท้ที่ตรวจแล้ว ยกเว้นระดับตำนาน/โบราณ","Sell")
 flag(T,"เก็บพระเข้าตู้เซฟ","เก็บพระเก๊และพระที่ไม่ขาย รวมถึงพระหายาก","Store")
+local H = Trade:Section("ต่อรองราคาพระ")
+local haggleToggle=H:Toggle({Name="ต่อราคาอัตโนมัติ",Desc="ต่อครั้งเดียวต่อองค์ • ใช้เมื่อเปิด FARM",Default=cfg.AutoHaggle,Callback=function(v:boolean) cfg.AutoHaggle=v;ctl.HaggleStatus=v and "เปิด • รอลูกค้า" or "ปิดระบบต่อราคา" end})
+ctl.HaggleToggle=haggleToggle
+H:Dropdown({Name="ส่วนลดที่ต้องการ",Options={"5%","10%","20%"},Default=tostring(cfg.HagglePct).."%",Callback=function(v:string) local n=tonumber(v:match("^%d+"));if n==5 or n==10 or n==20 then cfg.HagglePct=n end end})
+H:Label("ลูกค้าอาจปฏิเสธ • ซื้อเมื่อราคาจริงอยู่ในช่วงที่กำหนด")
+H:Button({Name="ดูผลต่อราคาล่าสุด",Callback=function() UI:Notify({Title="ต่อราคา",Text=ctl.HaggleStatus,Duration=5}) end})
+local Show = UI:Tab("SHOWROOM")
+local SH = Show:Section("จัดตู้โชว์พระ")
+local showroomToggle=SH:Toggle({Name="จัดพระราคาสูงสุดอัตโนมัติ",Desc="เปิดแล้วเริ่มทันที • เติมช่องว่าง • สลับเมื่อราคาสูงกว่า",Default=cfg.AutoShowroom,Callback=ctl.SetShowroom})
+ctl.ShowroomToggle=showroomToggle
+SH:Label("ใช้ราคาตลาดตามสภาพพระ • ไม่ขายพระ • ไม่แตะช่องพิเศษ")
+SH:Label("เปิดสวิตช์เพื่อเริ่มทันที • F8 พักหรือเล่นต่อทุกระบบ")
+SH:Button({Name="ดูแผนจัดตู้",Callback=function() local p=showroomPlan(data);UI:Notify({Title="แผนจัดตู้",Text=p.status,Duration=5}) end})
 local Upgrade = UI:Tab("UPGRADE")
 local U = Upgrade:Section("อัปเกรดอัตโนมัติ")
 flag(U,"ขยายร้านอัตโนมัติ","ตรวจเงิน เลเวล และเงื่อนไขตู้โชว์","AutoExpand")
