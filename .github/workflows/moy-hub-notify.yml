@@ -4,20 +4,31 @@ on:
   push:
     branches: [main]
     paths:
-      - 'ถนนพระเครื่อง.txt'
+      - '*.txt'
+      - '*.lua'
   workflow_dispatch:
 
-permissions: {}
+permissions:
+  contents: read
+
+concurrency:
+  group: moy-hub-script-notify
+  cancel-in-progress: false
 
 jobs:
   notify:
     runs-on: ubuntu-latest
-    timeout-minutes: 3
+    timeout-minutes: 10
     steps:
-      - name: Send script to Discord
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Send scripts to Discord
         env:
           DISCORD_BOT_TOKEN: ${{ secrets.DISCORD_BOT_TOKEN }}
           CHANNEL_ID: '1575741154782089316'
+          BEFORE_SHA: ${{ github.event.before }}
           COMMIT_SHA: ${{ github.sha }}
           EVENT_NAME: ${{ github.event_name }}
         run: |
@@ -25,49 +36,73 @@ jobs:
           import hashlib
           import json
           import os
-          import urllib.request
+          import subprocess
+          import time
           import urllib.error
+          import urllib.request
+          from pathlib import Path
           from urllib.parse import quote
 
-          token = os.environ['DISCORD_BOT_TOKEN'].strip()
-          if not token:
-              raise SystemExit('Missing DISCORD_BOT_TOKEN repository secret.')
-          channel = os.environ['CHANNEL_ID']
-          filename = 'ถนนพระเครื่อง.txt'
-          base = 'https://raw.githubusercontent.com/Pratipanx/MoyXHub/'
-          raw = base + 'refs/heads/main/' + quote(filename, safe='')
-          # Check the file exists at the triggering commit; never execute it.
-          check_url = base + os.environ['COMMIT_SHA'] + '/' + quote(filename, safe='')
-          try:
-              req = urllib.request.Request(check_url, method='HEAD', headers={'User-Agent': 'MoyHubNotifier/1.0'})
-              with urllib.request.urlopen(req, timeout=20):
-                  pass
-          except urllib.error.HTTPError as exc:
-              if exc.code == 404 and os.environ['EVENT_NAME'] == 'push':
-                  print('Script file absent at this commit; no announcement sent.')
-                  raise SystemExit(0)
-              raise SystemExit(f'GitHub file check failed: HTTP {exc.code}') from None
+          def git(*args):
+              return subprocess.check_output(['git', *args]).decode('utf-8').split('\0')
 
-          content = (
-              '**💎 MOY HUB | ถนนพระเครื่อง**\n\n'
-              '🎮 แมพ : ถนนพระเครื่อง\n'
-              '📜 Script : Free\n\n'
-              '```lua\n'
-              f'loadstring(game:HttpGet("{raw}"))()\n'
-              '```\n'
-              '📋 กดคัดลอกโค้ดด้านบนเพื่อใช้งาน'
-          )
-          nonce = hashlib.sha256((channel + os.environ['GITHUB_RUN_ID']).encode()).hexdigest()[:24]
-          payload = {'content': content, 'allowed_mentions': {'parse': []}, 'nonce': nonce, 'enforce_nonce': True}
-          req = urllib.request.Request(
-              f'https://discord.com/api/v10/channels/{channel}/messages',
-              data=json.dumps(payload).encode('utf-8'),
-              headers={'Authorization': 'Bot ' + token, 'Content-Type': 'application/json', 'User-Agent': 'DiscordBot (https://github.com/Pratipanx/MoyXHub, 1.0)'},
-              method='POST',
-          )
-          try:
-              with urllib.request.urlopen(req, timeout=20) as response:
-                  print('Discord message sent:', response.status)
-          except urllib.error.HTTPError as exc:
-              raise SystemExit(f'Discord HTTP {exc.code}: check token, channel ID, permissions or rate limit.') from None
+          def scripts(files):
+              return sorted({f for f in files if f and '/' not in f
+                             and Path(f).suffix.lower() in ('.txt', '.lua')
+                             and Path(f).stem.lower() not in ('readme', 'license', 'licence', 'changelog', 'notice', 'requirements')
+                             and Path(f).is_file() and not Path(f).is_symlink()})
+
+          def message(filename):
+              name = Path(filename).stem
+              name = name.replace('`', '').replace('\n', ' ').replace('\r', ' ')
+              for char in ('*', '_', '~', '|', '>', '[' , ']'):
+                  name = name.replace(char, '\\' + char)
+              url = 'https://raw.githubusercontent.com/Pratipanx/MoyXHub/refs/heads/main/' + quote(filename, safe='')
+              return (f'**💎 MOY HUB | {name}**\n\n'
+                      f'🎮 แมพ : {name}\n'
+                      '📜 Script : Free\n\n'
+                      '```lua\n'
+                      f'loadstring(game:HttpGet("{url}"))()\n'
+                      '```\n'
+                      '📋 กดคัดลอกโค้ดด้านบนเพื่อใช้งาน')
+
+          def send(token, channel, filename):
+              nonce = hashlib.sha256((channel + ':' + os.environ['GITHUB_RUN_ID'] + ':' + filename).encode()).hexdigest()[:24]
+              payload = {'content': message(filename), 'allowed_mentions': {'parse': []}, 'nonce': nonce, 'enforce_nonce': True}
+              req = urllib.request.Request(
+                  f'https://discord.com/api/v10/channels/{channel}/messages',
+                  data=json.dumps(payload).encode('utf-8'),
+                  headers={'Authorization': 'Bot ' + token, 'Content-Type': 'application/json', 'User-Agent': 'DiscordBot (https://github.com/Pratipanx/MoyXHub, 2.0)'},
+                  method='POST',
+              )
+              for attempt in range(5):
+                  try:
+                      with urllib.request.urlopen(req, timeout=20) as response:
+                          print(f'Sent {filename}: HTTP {response.status}')
+                          return
+                  except urllib.error.HTTPError as exc:
+                      if exc.code == 429 and attempt < 4:
+                          delay = float(json.loads(exc.read()).get('retry_after', 2))
+                          time.sleep(max(1, delay) + 0.2)
+                          continue
+                      raise SystemExit(f'Discord HTTP {exc.code}: check token, channel ID, permissions or rate limit.') from None
+
+          def main():
+              token = os.environ['DISCORD_BOT_TOKEN'].strip()
+              if not token:
+                  raise SystemExit('Missing DISCORD_BOT_TOKEN repository secret.')
+              before = os.environ.get('BEFORE_SHA', '')
+              if os.environ['EVENT_NAME'] == 'workflow_dispatch' or not before or not before.strip('0'):
+                  files = git('ls-files', '-z')
+              else:
+                  files = git('diff', '--name-only', '--diff-filter=AMRT', '-z', before, os.environ['COMMIT_SHA'], '--')
+              selected = scripts(files)
+              if not selected:
+                  print('No matching script files to announce.')
+              for filename in selected:
+                  send(token, os.environ['CHANNEL_ID'], filename)
+                  time.sleep(1)
+
+          if __name__ == '__main__':
+              main()
           PY
