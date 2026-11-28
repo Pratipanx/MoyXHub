@@ -332,7 +332,7 @@ local function action(name: string, arg: any?): boolean
 end
 -- Normal Humanoid navigation. No teleport or speed modification.
 local Pathfinding=game:GetService("PathfindingService")
-local function walkNearImpl(point:Vector3,reach:number,enabled:()->boolean):boolean
+local function walkNearImpl(point:Vector3,reach:number,enabled:()->boolean,normalOnly:boolean?):boolean
     if not enabled() then return false end
     local ch=P.Character
     local hum=ch and ch:FindFirstChildOfClass("Humanoid")
@@ -358,7 +358,7 @@ local function walkNearImpl(point:Vector3,reach:number,enabled:()->boolean):bool
     local height=hum.HipHeight+root.Size.Y/2
     if hum.RigType==Enum.HumanoidRigType.R6 then local leg=ch:FindFirstChild("Left Leg");if leg and leg:IsA("BasePart") then height+=leg.Size.Y end end
     -- Direct movement first. Only use pathfinding if the direct trip cannot finish.
-    if cfg.DirectWalk and valid() then
+    if not normalOnly and cfg.DirectWalk and valid() then
         local begin=root.Position
         local saved:{[BasePart]:boolean}={}
         local connection:RBXScriptConnection?=nil
@@ -659,7 +659,9 @@ local function promptPoint(pr:ProximityPrompt):Vector3?
     return nil
 end
 local function walkExtra(point:Vector3,reach:number,onlyDig:boolean?):boolean
-    return walkNear(point,reach,function() return extraActive() and (not onlyDig or cfg.AutoDig) end)
+    local function enabled() return extraActive() and (not onlyDig or cfg.AutoDig) end
+    if onlyDig then return walkNearImpl(point,reach,enabled,true) end
+    return walkNear(point,reach,enabled)
 end
 local function staffPlan(s:any):any
     if not s or not s.Staff or not cfg.AutoHire then return nil end
@@ -712,50 +714,131 @@ local function resultGui():boolean
     local g=P.PlayerGui:FindFirstChild("DigGui")
     return (g~=nil and (g:FindFirstChild("DigChest",true)~=nil or g:FindFirstChild("DigReveal",true)~=nil)) or P.PlayerGui:FindFirstChild("CaseOpen")~=nil
 end
+-- DIG: choose a real reachable prompt and count only confirmed state updates.
+local function digState(s:any):(number?,number?,string?)
+    local d=s and s.Dig
+    if not d or type(d.Equip)~="string" then return nil,nil,nil end
+    return tonumber(d.Stats and d.Stats.Digs),tonumber(d.Dur and d.Dur[d.Equip]),d.Equip
+end
+local function digReady(s:any):boolean
+    local n,dur,equip=digState(s)
+    return n~=nil and equip~=nil and dur~=nil and (dur==-1 or dur>0)
+end
+local function digDelta(before:number?,after:number?):number
+    if before==nil or after==nil or after<=before then return 0 end
+    return after-before
+end
+local function selectDig()
+    local folder=workspace:FindFirstChild("DigMounds")
+    local ch=P.Character
+    local rt=ch and ch:FindFirstChild("HumanoidRootPart")
+    local counts={total=0,eligible=0,rejectedGround=0,cooldown=0}
+    if not folder or not ch or not rt or not rt:IsA("BasePart") then return nil,nil,nil,counts end
+    local ray=RaycastParams.new()
+    ray.FilterType=Enum.RaycastFilterType.Exclude
+    ray.FilterDescendantsInstances={ch,folder}
+    ray.RespectCanCollide=true
+    local target:ProximityPrompt?=nil
+    local targetPt:Vector3?=nil
+    local targetMound:Instance?=nil
+    local best=math.huge
+    for _,m in ipairs(folder:GetChildren()) do
+        local pr=m:FindFirstChild("DigPrompt",true)
+        if pr and pr:IsA("ProximityPrompt") and pr.Enabled then
+            counts.total+=1
+            local pt=promptPoint(pr)
+            local hit=pt and workspace:Raycast(pt+Vector3.yAxis*40,-Vector3.yAxis*100,ray)
+            if not pt or not hit or pt.Y-hit.Position.Y < -2 or pt.Y-hit.Position.Y > 8 then
+                counts.rejectedGround+=1
+            elseif (digCooldown[m] or 0)>os.clock() then
+                counts.cooldown+=1
+            else
+                counts.eligible+=1
+                local d=(pt-rt.Position).Magnitude
+                if d<best then target=pr;targetPt=pt;targetMound=m;best=d end
+            end
+        end
+    end
+    return target,targetPt,targetMound,counts
+end
+ctl.DigQA=function(testWalk:boolean?)
+    local pr,pt,m,counts=selectDig()
+    local walkOK:boolean?=nil
+    if testWalk and pr and pt and not cfg.AutoDig and not active() then
+        walkOK=walkNearImpl(pt,pr.MaxActivationDistance,function() return STATE.alive() and not cfg.AutoDig and not active() end,true)
+    end
+    local n,dur,equip=digState(data)
+    return {version="DIG-QA-2",counts=counts,target=m and m:GetAttribute("Id"),hold=pr and pr.HoldDuration,range=pr and pr.MaxActivationDistance,walkOK=walkOK,
+        ready=digReady(data),digs=n,durability=dur,equip=equip,autoEnabled=cfg.AutoDig,
+        tests={confirmed=digDelta(76,77)==1,unchanged=digDelta(76,76)==0,missing=digDelta(76,nil)==0,
+        exhausted=not digReady({Dig={Equip="stone",Dur={stone=0},Stats={Digs=76}}}),
+        unlimited=digReady({Dig={Equip="wood",Dur={wood=-1},Stats={Digs=76}}})}}
+end
+local useKeyboardNext=false
 local function digTick(s:any):boolean
     if not cfg.AutoDig or os.clock()<digNext then return false end
     if resultGui() then ctl.DigStatus="รอเปิดกล่อง / ผลขุดอัตโนมัติ";return true end
-    local folder=workspace:FindFirstChild("DigMounds");local rt=P.Character and P.Character:FindFirstChild("HumanoidRootPart")
-    if not folder or not rt or not rt:IsA("BasePart") then ctl.DigStatus="รอกองดิน";digNext=os.clock()+3;return false end
-    if s and s.Dig and not s.Dig.Equip then ctl.DigStatus="ยังไม่ได้ใส่พลั่ว";digNext=os.clock()+5;return false end
-    local target:ProximityPrompt?=nil;local targetPt:Vector3?=nil;local targetMound:Instance?=nil;local best=math.huge
-    for _,m in ipairs(folder:GetChildren()) do
-        local pr=m:FindFirstChild("DigPrompt",true)
-        if pr and pr:IsA("ProximityPrompt") and pr.Enabled and (digCooldown[m] or 0)<=os.clock() then local pt=promptPoint(pr);if pt then local d=(pt-rt.Position).Magnitude;if d<best then target=pr;targetPt=pt;targetMound=m;best=d end end end
-    end
-    if not target or not targetPt then ctl.DigStatus="รอกองดินเกิดใหม่";digNext=os.clock()+3;return false end
-    local pr=target :: ProximityPrompt
-    if targetMound then digCooldown[targetMound]=os.clock()+15 end
+    if not digReady(data or s) then ctl.DigStatus="รอข้อมูล / พลั่วหมด";digNext=os.clock()+5;return false end
     for old in pairs(digCooldown) do if old.Parent==nil then digCooldown[old]=nil end end
+    local pr,pt,m=selectDig()
+    if not pr or not pt or not m then ctl.DigStatus="รอกองดินที่เข้าถึงได้";digNext=os.clock()+3;return false end
     ctl.DigStatus="เดินไปกองดิน";report(ctl.DigStatus)
-    if not walkExtra(targetPt,pr.MaxActivationDistance,true) then digNext=os.clock()+3;return true end
-    if not pr.Parent or not pr.Enabled or not cfg.AutoDig then return true end
-    local before=s and s.Dig and s.Dig.Stats and s.Dig.Stats.Digs or 0
-    ctl.DigAttempts+=1;ctl.DigStatus="กำลังขุด";report(ctl.DigStatus)
-    local hold=math.max(.2,pr.HoldDuration)+.25;local focused=false
-    pcall(function() focused=isrbxactive() end)
-    if focused then digKeyHeld=pcall(function() keypress(0x45) end) end
-    if not digKeyHeld then activeDigPrompt=pr;pcall(function() pr:InputHoldBegin() end) end
-    local finished=extraWait(hold,true);stopDigInput();if not finished then return true end
-    extraWait(.6,true)
-    local deadline=os.clock()+12;local nextPress=0
-    while cfg.AutoDig and extraActive() and os.clock()<deadline do
-        if not diggingGui() then break end
-        if os.clock()>=nextPress then
-            local focus=false;pcall(function() focus=isrbxactive() end)
-            if not focus then ctl.DigStatus="เปิดหน้าต่าง Roblox เพื่อเล่นมินิเกม";break end
-            pcall(function() keypress(0x20);task.wait(.08);keyrelease(0x20) end);nextPress=os.clock()+.75
-        end
-        task.wait(.12)
+    if not walkExtra(pt,pr.MaxActivationDistance,true) then
+        digCooldown[m]=os.clock()+8;digNext=os.clock()+1;ctl.DigStatus="เดินไม่ถึงกองดิน";return true
     end
-    local waitEnd=os.clock()+5;local success=false
+    local ch=P.Character
+    local root=ch and ch:FindFirstChild("HumanoidRootPart")
+    local current=promptPoint(pr)
+    if not root or not root:IsA("BasePart") or not current or not pr.Parent or not pr.Enabled or not cfg.AutoDig or not extraActive() or not digReady(data) then return true end
+    if (root.Position-current).Magnitude>pr.MaxActivationDistance-.2 then
+        digCooldown[m]=os.clock()+3;digNext=os.clock()+1;ctl.DigStatus="อยู่นอกระยะขุด";return true
+    end
+    local before=digState(data)
+    if before==nil then return true end
+    ctl.DigAttempts+=1;ctl.DigStatus="กำลังขุด";report(ctl.DigStatus)
+    local started=false
+    local triggered=false
+    local id=m:GetAttribute("Id")
+    local promptConn=pr.Triggered:Connect(function() triggered=true end)
+    local focus=false
+    pcall(function() focus=isrbxactive() end)
+    if useKeyboardNext and focus then
+        digKeyHeld=pcall(function() keypress(0x45) end)
+    end
+    if not digKeyHeld then
+        activeDigPrompt=pr
+        pcall(function() pr:InputHoldBegin() end)
+    end
+    local holdEnd=os.clock()+math.max(.2,pr.HoldDuration)+.35
     repeat
-        local after=data and data.Dig and data.Dig.Stats and data.Dig.Stats.Digs or before
-        if after>before then ctl.DigSuccess+=after-before;success=true;ctl.DigStatus="ขุดสำเร็จ";report(ctl.DigStatus);break end
-        if not extraActive() or not cfg.AutoDig then break end;task.wait(.2)
-    until os.clock()>=waitEnd
-    if success then digFails=0 else digFails+=1;ctl.DigStatus="ยังไม่พบผลขุด";report(ctl.DigStatus) end
-    digNext=os.clock()+(digFails>=2 and 15 or (active() and 18 or 2))
+        if ch and ch:GetAttribute("Digging")==id then started=true end
+        if not cfg.AutoDig or not extraActive() or P.Character~=ch then break end
+        task.wait(.08)
+    until os.clock()>=holdEnd or not pr.Parent
+    stopDigInput()
+    promptConn:Disconnect()
+    local deadline=os.clock()+15
+    local success=false
+    repeat
+        local after=digState(data)
+        local delta=digDelta(before,after)
+        if delta>0 then
+            ctl.DigSuccess+=delta;success=true;ctl.DigStatus="ขุดสำเร็จ";report(ctl.DigStatus);break
+        end
+        if ch and ch:GetAttribute("Digging")==id then started=true end
+        if not STATE.alive() then break end
+        task.wait(.15)
+    until os.clock()>=deadline
+    if success then
+        digFails=0;useKeyboardNext=false
+    else
+        digFails+=1
+        useKeyboardNext=not started and not triggered
+        ctl.DigStatus=(started or triggered) and "ยังไม่พบผลจากเกม" or "ปุ่มขุดไม่เริ่มทำงาน"
+        report(ctl.DigStatus)
+        if m.Parent then digCooldown[m]=os.clock()+5 end
+    end
+    digNext=os.clock()+(success and 2 or (digFails>=2 and 8 or 2))
     if resultGui() then ctl.DigStatus="รอเกมเปิดกล่องและปิดผลขุด" end
     return true
 end
@@ -997,8 +1080,7 @@ E:Button({Name="ดูผลตรวจล่าสุด",Callback=function()
     UI:Notify({Title="ผลตรวจพระ",Text=(ctl.LastVerdict~="" and ctl.LastVerdict or "ยังไม่มีผล").." • "..ctl.LastReason,Duration=5})
 end})
 local Trade = UI:Tab("TRADE")
-local T = Trade:Section("รับเช่าและปล่อยเช่า")
-flag(T,"รับเช่าพระแท้อัตโนมัติ","ซื้อเฉพาะพระที่จำแนกได้ว่าแท้","Buy")
+local T = Trade:Section("รับเช่าและปล่อยเช่า")flag(T,"รับเช่าพระแท้อัตโนมัติ","ซื้อเฉพาะพระที่จำแนกได้ว่าแท้","Buy")
 local budgetSliders={}
 local function manualBudget(key:string,v:number)
     if not cfg.AutoBudget then cfg[key]=math.clamp(math.floor(v),key=="Reserve" and 0 or 1,5000000) end
